@@ -1,0 +1,35 @@
+{
+  "name": "nineforge",
+  "version": "0.3.0",
+  "private": false,
+  "license": "MIT",
+  "description": "A static analyzer and robustness screen for CNC G-code workcells.",
+  "scripts": {
+    "dev": "next dev --hostname 127.0.0.1 --port 5173",
+    "build": "next build",
+    "start": "next start",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "check:example": "tsx cli/main.ts check public/examples/bracket.nc --workcell public/examples/bracket.workcell.json --state public/examples/bracket.state.json --stress"
+  },
+  "dependencies": {
+    "@react-three/drei": "^9.122.0",
+    "@react-three/fiber": "^8.18.0",
+    "next": "^14.2.35",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "three": "^0.166.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@types/three": "^0.166.0",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.39",
+    "tailwindcss": "^3.4.7",
+    "tsx": "^4.19.2",
+    "typescript": "^5.5.3",
+    "vitest": "^4.1.10"
+  }
+}

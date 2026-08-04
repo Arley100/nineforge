@@ -1,0 +1,5 @@
+{
+  "control": "sim",
+  "offsets": { "G54": { "x": 0, "y": 0, "z": 0 } },
+  "tools": { "T01": { "diameter": 6, "length": 50 } }
+}

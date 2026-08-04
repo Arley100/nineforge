@@ -1,0 +1,7 @@
+{
+  "machine": "Desktop CNC Mill",
+  "limits": { "min": { "x": -250, "y": -200, "z": -100 }, "max": { "x": 250, "y": 200, "z": 100 } },
+  "rapidFeed": 5000,
+  "feedLimit": 1000,
+  "fixtures": []
+}

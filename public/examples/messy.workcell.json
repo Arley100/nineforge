@@ -1,0 +1,7 @@
+{
+  "machine": "CNC Router",
+  "limits": { "min": { "x": -600, "y": -600, "z": -150 }, "max": { "x": 600, "y": 600, "z": 150 } },
+  "rapidFeed": 8000,
+  "feedLimit": 1500,
+  "fixtures": [ { "name": "clamp", "min": { "x": -120, "y": -110, "z": -5 }, "max": { "x": -80, "y": -90, "z": 20 } } ]
+}

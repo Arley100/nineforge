@@ -1,0 +1,10 @@
+export type Vec3 = { x: number; y: number; z: number; };
+export type Segment = { from: Vec3; to: Vec3; motion: "rapid" | "linear"; feed: number; feedSet: boolean; line: number; };
+export type Diagnostic = { code: string; severity: "error" | "warning" | "info"; message: string; line?: number; };
+export type FixtureBox = { name: string; min: Vec3; max: Vec3; };
+export type Workcell = { machine: string; units: "mm"; limits: { min: Vec3; max: Vec3 }; rapidFeed: number; fixtures: FixtureBox[]; feedLimit?: number; };
+export type MachineState = { control: string; offsets: Record<string, Vec3>; tools: Record<string, { diameter?: number; length?: number }>; };
+export type ProgramAssumptions = { units: "mm" | "in"; offsetsUsed: string[]; toolsUsed: string[]; envelope: { min: Vec3; max: Vec3 } | null; };
+export type ParseResult = { segments: Segment[]; diagnostics: Diagnostic[]; units: "mm" | "in"; assumptions: ProgramAssumptions; };
+export type Verdict = "block" | "caution" | "pass";
+export type AnalysisResult = { diagnostics: Diagnostic[]; verdict: Verdict; stats: { segments: number; distanceMm: number; rapidDistanceMm: number; durationSec: number; }; };
