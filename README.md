@@ -166,3 +166,6 @@ examples, screenshots, docs) is in the repo.
 
 Start with `docs/SCREENSHOTS.md` for the capture guide, and keep the honesty policy:
 every new capability must document what it does **not** model.
+## License
+
+MIT - see [LICENSE](LICENSE).
