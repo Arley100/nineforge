@@ -1,6 +1,5 @@
 import { AnalysisResult, Diagnostic, FixtureBox, MachineState, ParseResult, Vec3, Workcell } from "./types";
 
-/** Exact segment-vs-AABB intersection (slab method). Cannot tunnel through thin fixtures. */
 function segmentIntersectsBox(a: Vec3, b: Vec3, box: FixtureBox): boolean {
   let tmin = 0, tmax = 1;
   for (const ax of ["x", "y", "z"] as const) {
@@ -25,7 +24,6 @@ function outOfLimits(p: Vec3, w: Workcell): boolean {
 
 function distance(a: Vec3, b: Vec3): number { return Math.sqrt((b.x - a.x) ** 2 + (b.y - a.y) ** 2 + (b.z - a.z) ** 2); }
 
-/** The work-offset shift analyze() applies to program coordinates. Exported so the UI renders the same frame it checks. */
 export function activeShift(parse: ParseResult, state?: MachineState | null): Vec3 {
   if (!state) return { x: 0, y: 0, z: 0 };
   const a = parse.assumptions;
@@ -33,7 +31,6 @@ export function activeShift(parse: ParseResult, state?: MachineState | null): Ve
   return primaryName && state.offsets[primaryName] ? state.offsets[primaryName] : { x: 0, y: 0, z: 0 };
 }
 
-/** Tool modeled as a vertical cylinder standing on the tip: fixture XY footprint inflated by the radius, Z extended down to the fixture top. */
 function sweptBox(f: FixtureBox, radius: number): FixtureBox {
   return { name: f.name, min: { x: f.min.x - radius, y: f.min.y - radius, z: -1e9 }, max: { x: f.max.x + radius, y: f.max.y + radius, z: f.max.z } };
 }
@@ -80,7 +77,6 @@ export function analyze(parse: ParseResult, workcell: Workcell, state?: MachineS
     const horizontal = Math.abs(from.x - to.x) > 0.1 || Math.abs(from.y - to.y) > 0.1;
     if (seg.motion === "rapid" && horizontal && Math.min(from.z, to.z) < 2 && d > 0.1) diagnostics.push({ code: "NF004", severity: "warning", message: "Rapid traverse at low Z (" + Math.min(from.z, to.z).toFixed(2) + ") near line " + seg.line + ".", line: seg.line });
   }
-  // Belt and braces: non-finite stats mean some coordinate escaped validation upstream. Never let that pass.
   if (!Number.isFinite(distanceMm) || !Number.isFinite(durationSec)) diagnostics.push({ code: "NF105", severity: "error", message: "Program produced non-finite geometry; the program cannot be validated." });
   const seen = new Set<string>();
   const deduped = diagnostics.filter((x) => { const k = x.code + "|" + (x.line ?? 0) + "|" + x.message; if (seen.has(k)) return false; seen.add(k); return true; });

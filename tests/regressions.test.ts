@@ -15,7 +15,7 @@ const baseWc = (fixtures: unknown[] = [], feedLimit?: number) => parseWorkcell(J
 
 describe("fail-closed parsing", () => {
   it("blocks a program with an unparseable coordinate word", () => {
-    const r = analyze(parseGCode("G21 G90\nG0 Z5\nG1 X1O0 Y0 F500\nG1 Z-2"), baseWc([], 1000));
+    const r = analyze(parseGCode("G21 G90\nG0 Z5\nG1 X1.2.3 Y0 F500\nG1 Z-2"), baseWc([], 1000));
     expect(r.verdict).toBe("block");
     expect(r.diagnostics.some((d) => d.code === "NF105")).toBe(true);
     expect(Number.isFinite(r.stats.distanceMm)).toBe(true);

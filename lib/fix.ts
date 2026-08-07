@@ -3,14 +3,13 @@ import { Segment, Workcell } from "./types";
 export type FixAction = {
   type: "gcode-edit" | "physical-action";
   description: string;
-  /** gcode-edit actions may be applied by an agent loop; physical-action never may: editing the workcell file does not move the real clamp. */
   autoApplicable: boolean;
 };
 export type FixSuggestion = { gcode: string; workcell: Workcell; notes: string[]; actions: FixAction[] };
 
 export function suggestFixes(gcode: string, workcell: Workcell, segments: Segment[]): FixSuggestion {
   const actions: FixAction[] = [];
-  const cap = workcell.feedLimit ?? 1000; // cap at the workcell's declared limit, not a hardcoded number
+  const cap = workcell.feedLimit ?? 1000;
   const fixedGcode = gcode.split(/\r?\n/).map((line) => {
     const clean = line.split(";")[0];
     if (!clean.trim()) return line;
@@ -29,7 +28,6 @@ export function suggestFixes(gcode: string, workcell: Workcell, segments: Segmen
   const fixedWorkcell: Workcell = {
     ...workcell,
     fixtures: workcell.fixtures.map((f) => {
-      // 3D overlap: only suggest moving a fixture the toolpath actually passes through vertically
       const overlaps = f.max.x >= minX && f.min.x <= maxX && f.max.y >= minY && f.min.y <= maxY && f.max.z >= minZ && f.min.z <= maxZ;
       if (!overlaps) return f;
       const h = f.max.y - f.min.y;
