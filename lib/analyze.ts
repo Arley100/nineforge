@@ -43,12 +43,29 @@ export function analyze(parse: ParseResult, workcell: Workcell, state?: MachineS
   const shift = activeShift(parse, state);
   let toolRadius = 0;
   let toolLabel = "";
+  let activeToolName = "";
+  let zTipShift = 0;
   if (state) {
     for (const o of a.offsetsUsed) { if (!state.offsets[o]) diagnostics.push({ code: "NF201", severity: "error", message: "Program references " + o + " but it is not defined in the machine state." }); }
     for (const t of a.toolsUsed) {
       const tool = state.tools[t];
       if (!tool) { diagnostics.push({ code: "NF202", severity: "error", message: "Program references " + t + " but it is not present in the tool table." }); continue; }
+      if (!activeToolName) activeToolName = t;
       if (tool.diameter !== undefined && tool.diameter / 2 > toolRadius) { toolRadius = tool.diameter / 2; toolLabel = t + " (\u00d8 " + tool.diameter + " mm)"; }
+    }
+    // Tool length compensation. With G43/G44 active the controller makes the tip
+    // follow programmed Z, so no shift. Without it, the spindle nose follows the
+    // program and the tip hangs 'length' mm below: shift geometry checks down.
+    const comp = a.toolComp ?? "none";
+    if (comp !== "none") {
+      const name = a.hRef ? "T" + a.hRef.slice(1) : activeToolName;
+      if (!name || !state.tools[name]) diagnostics.push({ code: "NF207", severity: "error", message: "Tool length compensation " + (comp === "g43" ? "G43" : "G44") + " references " + (a.hRef ?? name ?? "no tool") + " which is not present in the tool table; Z cannot be validated." });
+    } else if (activeToolName) {
+      const tool = state.tools[activeToolName];
+      if (tool && tool.length !== undefined) {
+        zTipShift = -tool.length;
+        diagnostics.push({ code: "NF206", severity: "warning", message: "No tool length compensation (G43) active; assuming the tip of " + activeToolName + " is " + tool.length + " mm below programmed Z." });
+      }
     }
     if (a.envelope) {
       const offsetsToCheck = a.offsetsUsed.length > 0 ? a.offsetsUsed : (state.offsets["G54"] ? ["G54"] : []);
@@ -63,28 +80,24 @@ export function analyze(parse: ParseResult, workcell: Workcell, state?: MachineS
     }
     if (a.offsetsUsed.length > 1) diagnostics.push({ code: "NF204", severity: "info", message: "Multiple work offsets referenced; geometry checks use the first defined offset." });
   }
-  const add = (p: Vec3): Vec3 => ({ x: p.x + shift.x, y: p.y + shift.y, z: p.z + shift.z });
+  const add = (p: Vec3): Vec3 => ({ x: p.x + shift.x, y: p.y + shift.y, z: p.z + shift.z + zTipShift });
   let distanceMm = 0, rapidDistanceMm = 0, durationSec = 0;
   let rapidInsideStock = false;
   let cuttingIntersectsStock = false;
   let cutBelowStock = false;
-  
+
   const stockBox: FixtureBox | null = workcell.stock ? { name: "stock", min: workcell.stock.min, max: workcell.stock.max } : null;
   let hasLinearMoves = false;
 
   for (const seg of parse.segments) {
     const from = add(seg.from); const to = add(seg.to); const d = distance(from, to); distanceMm += d;
     if (seg.motion === "rapid") { rapidDistanceMm += d; durationSec += (d / Math.max(1, workcell.rapidFeed)) * 60; } else { durationSec += (d / Math.max(1, seg.feed)) * 60; }
-    
     if (outOfLimits(from, workcell) || outOfLimits(to, workcell)) diagnostics.push({ code: "NF002", severity: "error", message: "Motion exceeds machine travel limits (line " + seg.line + ").", line: seg.line });
-    
     for (const f of workcell.fixtures) {
       if (segmentIntersectsBox(from, to, f)) diagnostics.push({ code: "NF001", severity: "error", message: "Toolpath intersects fixture '" + f.name + "' (line " + seg.line + ").", line: seg.line });
       else if (toolRadius > 0 && segmentIntersectsBox(from, to, sweptBox(f, toolRadius))) diagnostics.push({ code: "NF205", severity: "error", message: "Tool " + toolLabel + " sweeps into fixture '" + f.name + "' (line " + seg.line + "); the centerline clears it by less than the tool radius.", line: seg.line });
     }
-    
     if (seg.motion === "linear" && seg.feedSet && seg.feed > feedLimit) diagnostics.push({ code: "NF003", severity: "warning", message: "Feed " + Math.round(seg.feed) + " mm/min exceeds workcell feed limit " + feedLimit + " (line " + seg.line + ").", line: seg.line });
-    
     const horizontal = Math.abs(from.x - to.x) > 0.1 || Math.abs(from.y - to.y) > 0.1;
     if (seg.motion === "rapid" && horizontal && Math.min(from.z, to.z) < 2 && d > 0.1) diagnostics.push({ code: "NF004", severity: "warning", message: "Rapid traverse at low Z (" + Math.min(from.z, to.z).toFixed(2) + ") near line " + seg.line + ".", line: seg.line });
 
