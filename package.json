@@ -11,7 +11,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "check:example": "tsx cli/main.ts check public/examples/bracket.nc --workcell public/examples/bracket.workcell.json --state public/examples/bracket.state.json --stress",
-    "demo:agent-loop": "tsx examples/agent-loop.ts"
+    "demo:agent-loop": "tsx examples/agent-loop.ts",
+    "sarif:example": "tsx cli/sarif.ts public/examples/bracket.nc public/examples/bracket.workcell.json public/examples/bracket.state.json"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -36,6 +37,7 @@
     "vitest": "^4.1.10"
   },
   "bin": {
-    "nineforge-mcp": "npx tsx ./mcp/server.ts"
+    "nineforge-mcp": "npx tsx ./mcp/server.ts",
+    "nineforge-sarif": "npx tsx ./cli/sarif.ts"
   }
 }
