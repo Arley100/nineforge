@@ -1,0 +1,29 @@
+name: validate-nc
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  sarif:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # bracket is expected to block (exit 1); we still want the SARIF uploaded.
+      - name: Validate bracket example to SARIF
+        run: npx tsx cli/sarif.ts public/examples/bracket.nc public/examples/bracket.workcell.json public/examples/bracket.state.json bracket.sarif
+        continue-on-error: true
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: bracket.sarif
