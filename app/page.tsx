@@ -3,7 +3,7 @@ import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import { EXAMPLES } from "@/lib/examples";
 import { parseGCode } from "@/lib/parse";
-import { analyze } from "@/lib/analyze";
+import { activeShift, analyze } from "@/lib/analyze";
 import { parseWorkcell } from "@/lib/workcell";
 import { parseState } from "@/lib/state";
 import { summarize } from "@/lib/summarize";
@@ -11,7 +11,7 @@ import { suggestFixes } from "@/lib/fix";
 import { PERTURBATIONS } from "@/lib/perturb";
 import { AnalysisResult, MachineState, Segment, Workcell } from "@/lib/types";
 const Viewer = dynamic(() => import("@/components/Viewer"), { ssr: false });
-const REPO_URL = process.env.NEXT_PUBLIC_REPO_URL ?? "https://github.com/nineforge/nineforge";
+const REPO_URL = process.env.NEXT_PUBLIC_REPO_URL ?? "https://github.com/Arley100/nineforge";
 type StressRow = { name: string; verdict: string };
 export default function Home() {
   const [exampleId, setExampleId] = useState(EXAMPLES[0].id);
@@ -31,12 +31,19 @@ export default function Home() {
       const wc = parseWorkcell(nextWcJson);
       const st = nextStJson.trim() ? parseState(nextStJson) : null;
       const pr = parseGCode(nextGcode);
-      setWorkcell(wc); setState(st); setSegments(pr.segments); setResult(analyze(pr, wc, st));
+      // Render the same frame analyze() checks: program coordinates shifted by the
+      // active work offset. Without this, a nonzero G54 draws the path in the wrong
+      // place relative to the fixtures while the verdict is computed correctly.
+      const shift = activeShift(pr, st);
+      const shifted = pr.segments.map((s) => ({ ...s, from: { x: s.from.x + shift.x, y: s.from.y + shift.y, z: s.from.z + shift.z }, to: { x: s.to.x + shift.x, y: s.to.y + shift.y, z: s.to.z + shift.z } }));
+      setWorkcell(wc); setState(st); setSegments(shifted); setResult(analyze(pr, wc, st));
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); setWorkcell(null); setState(null); setResult(null); setSegments([]); }
   }
   async function loadExample(id: string) {
     const ex = EXAMPLES.find((e) => e.id === id); if (!ex) return;
-    const [nc, wc, st] = await Promise.all([fetch(ex.nc).then((r) => r.text()), fetch(ex.workcell).then((r) => r.text()), fetch(ex.state).then((r) => r.text())]);
+    const grab = async (url: string) => { const r = await fetch(url); if (!r.ok) throw new Error("Failed to load " + url + " (" + r.status + ")"); return r.text(); };
+    let nc = "", wc = "", st = "";
+    try { [nc, wc, st] = await Promise.all([grab(ex.nc), grab(ex.workcell), grab(ex.state)]); } catch (e) { setError(e instanceof Error ? e.message : String(e)); return; }
     setExampleId(id); setGcode(nc); setWorkcellJson(wc); setStateJson(st); setFixNotes(null); run(nc, wc, st);
   }
   useEffect(() => { void loadExample(EXAMPLES[0].id); }, []);
@@ -64,7 +71,7 @@ export default function Home() {
       <div className="mx-auto max-w-7xl space-y-6">
         <header className="space-y-2">
           <h1 className="text-3xl font-bold tracking-tight">NineForge</h1>
-          <p className="text-neutral-400">Pre-flight verification for CNC workcells: does this program's assumptions match the world it is about to run in?</p>
+          <p className="text-neutral-400">Pre-flight verification for CNC workcells: does this program&apos;s assumptions match the world it is about to run in?</p>
           <p className="rounded-xl border border-neutral-800 bg-neutral-900 p-3 text-xs text-neutral-400">Scope: deterministic geometry, process rules, and state cross-checks. Reports what it does not model. Never replaces CAM verification or a prove-out.</p>
         </header>
         <div className="flex flex-wrap items-center gap-3 rounded-2xl border bg-neutral-900 p-4">
