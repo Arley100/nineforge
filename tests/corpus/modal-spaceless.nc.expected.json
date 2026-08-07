@@ -1,0 +1,98 @@
+[
+  {
+    "from": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "to": {
+      "x": 0,
+      "y": 0,
+      "z": 5
+    },
+    "motion": "rapid",
+    "feed": 500,
+    "feedSet": false,
+    "line": 2
+  },
+  {
+    "from": {
+      "x": 0,
+      "y": 0,
+      "z": 5
+    },
+    "to": {
+      "x": 5,
+      "y": 5,
+      "z": 5
+    },
+    "motion": "rapid",
+    "feed": 500,
+    "feedSet": false,
+    "line": 3
+  },
+  {
+    "from": {
+      "x": 5,
+      "y": 5,
+      "z": 5
+    },
+    "to": {
+      "x": 80,
+      "y": 5,
+      "z": 5
+    },
+    "motion": "linear",
+    "feed": 900,
+    "feedSet": true,
+    "line": 4
+  },
+  {
+    "from": {
+      "x": 80,
+      "y": 5,
+      "z": 5
+    },
+    "to": {
+      "x": 80,
+      "y": 60,
+      "z": 5
+    },
+    "motion": "linear",
+    "feed": 900,
+    "feedSet": false,
+    "line": 5
+  },
+  {
+    "from": {
+      "x": 80,
+      "y": 60,
+      "z": 5
+    },
+    "to": {
+      "x": 5,
+      "y": 60,
+      "z": 5
+    },
+    "motion": "linear",
+    "feed": 900,
+    "feedSet": false,
+    "line": 6
+  },
+  {
+    "from": {
+      "x": 5,
+      "y": 60,
+      "z": 5
+    },
+    "to": {
+      "x": 5,
+      "y": 60,
+      "z": 10
+    },
+    "motion": "rapid",
+    "feed": 900,
+    "feedSet": false,
+    "line": 7
+  }
+]
