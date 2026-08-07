@@ -4,6 +4,6 @@ export type Diagnostic = { code: string; severity: "info" | "warning" | "error";
 export type FixtureBox = { name: string; min: Vec3; max: Vec3 };
 export type Workcell = { machine: string; limits: { min: Vec3; max: Vec3 }; rapidFeed: number; feedLimit?: number; fixtures: FixtureBox[]; stock?: { min: Vec3; max: Vec3 } };
 export type MachineState = { control: string; offsets: Record<string, Vec3>; tools: Record<string, { diameter?: number; length?: number }> };
-export type ProgramAssumptions = { units: "mm" | "in"; offsetsUsed: string[]; toolsUsed: string[]; envelope: { min: Vec3; max: Vec3 } | null };
+export type ProgramAssumptions = { units: "mm" | "in"; offsetsUsed: string[]; toolsUsed: string[]; envelope: { min: Vec3; max: Vec3 } | null; toolComp: "none" | "g43" | "g44"; hRef: string | null };
 export type ParseResult = { segments: Segment[]; diagnostics: Diagnostic[]; units: "mm" | "in"; assumptions: ProgramAssumptions };
 export type AnalysisResult = { diagnostics: Diagnostic[]; verdict: "pass" | "caution" | "block"; stats: { segments: number; distanceMm: number; rapidDistanceMm: number; durationSec: number } };

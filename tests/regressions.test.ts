@@ -141,3 +141,28 @@ describe("Stock model and air-cut detection", () => {
     expect(r.verdict).toBe("block");
   });
 });
+
+
+describe("tool length offsets", () => {
+  const clampWc = () => baseWc([{ name: "clamp", min: { x: 100, y: -10, z: -5 }, max: { x: 120, y: 10, z: 5 } }], 1000);
+  const toolState = () => parseState(JSON.stringify({ control: "sim", offsets: { G54: { x: 0, y: 0, z: 0 } }, tools: { T01: { diameter: 6, length: 50 } } }));
+
+  it("assumes the tip hangs below programmed Z when G43 is missing (NF206)", () => {
+    const r = analyze(parseGCode("G21 G90\nT01 M6\nG0 Z50\nG0 X110 Y0"), clampWc(), toolState());
+    expect(r.diagnostics.some((d) => d.code === "NF206")).toBe(true);
+    expect(r.diagnostics.some((d) => d.code === "NF001")).toBe(true);
+    expect(r.verdict).toBe("block");
+  });
+
+  it("G43 makes the tip follow programmed Z", () => {
+    const r = analyze(parseGCode("G21 G90\nT01 M6\nG43 H01\nG0 Z50\nG0 X110 Y0"), clampWc(), toolState());
+    expect(r.diagnostics.filter((d) => d.severity === "error")).toHaveLength(0);
+    expect(r.verdict).toBe("pass");
+  });
+
+  it("G43 with an unknown H reference fails closed (NF207)", () => {
+    const r = analyze(parseGCode("G21 G90\nT01 M6\nG43 H02\nG0 Z50"), clampWc(), toolState());
+    expect(r.diagnostics.some((d) => d.code === "NF207")).toBe(true);
+    expect(r.verdict).toBe("block");
+  });
+});
