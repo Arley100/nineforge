@@ -169,3 +169,31 @@ every new capability must document what it does **not** model.
 ## License
 
 MIT - see [LICENSE](LICENSE).
+
+
+## MCP server (AI agent integration)
+
+NineForge ships an MCP server so coding agents can validate G-code while writing it.
+
+Run it from the repo root:
+
+    npx tsx ./mcp/server.ts
+
+Example client config (Claude Code / Cursor / any MCP client):
+
+    {
+      "mcpServers": {
+        "nineforge": {
+          "command": "npx",
+          "args": ["tsx", "./mcp/server.ts"],
+          "cwd": "/path/to/nineforge"
+        }
+      }
+    }
+
+Tools: nineforge_check (versioned report) and nineforge_fix (typed actions;
+gcode-edit actions are auto-applicable, physical-action never are).
+
+Demo transcript (Gate 1 exit criterion):
+
+    npm run demo:agent-loop
