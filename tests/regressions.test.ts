@@ -114,3 +114,30 @@ describe("tool geometry", () => {
     expect(r.verdict).toBe("block");
   });
 });
+
+describe("Stock model and air-cut detection", () => {
+  it("blocks rapid traverse inside the stock volume (NF006)", () => {
+    const wc = baseWc([], 1000);
+    wc.stock = { min: { x: -10, y: -10, z: -10 }, max: { x: 10, y: 10, z: 10 } };
+    const r = analyze(parseGCode("G21 G90\nG0 Z0\nG0 X5 Y0"), wc);
+    expect(r.diagnostics.some((d) => d.code === "NF006")).toBe(true);
+    expect(r.verdict).toBe("block");
+  });
+
+  it("warns on air-cut when G1 moves miss the stock entirely (NF007)", () => {
+    const wc = baseWc([], 1000);
+    // Place stock away from the origin (0,0,0) so the initial rapid moves don't trigger NF006
+    wc.stock = { min: { x: 20, y: 20, z: -10 }, max: { x: 40, y: 40, z: 10 } };
+    const r = analyze(parseGCode("G21 G90\nG0 Z15\nG0 X50 Y50\nG1 Z-2 F500\nG1 X60 Y50"), wc);
+    expect(r.diagnostics.some((d) => d.code === "NF007")).toBe(true);
+    expect(r.verdict).toBe("caution");
+  });
+
+  it("blocks cutting below the stock bottom into the table (NF008)", () => {
+    const wc = baseWc([], 1000);
+    wc.stock = { min: { x: -10, y: -10, z: 0 }, max: { x: 10, y: 10, z: 10 } };
+    const r = analyze(parseGCode("G21 G90\nG0 Z5\nG1 Z-5 F500\nG1 X5 Y0"), wc);
+    expect(r.diagnostics.some((d) => d.code === "NF008")).toBe(true);
+    expect(r.verdict).toBe("block");
+  });
+});

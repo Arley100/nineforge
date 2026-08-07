@@ -9,5 +9,14 @@ export function parseWorkcell(json: string): Workcell {
     if (!f || typeof f.name !== "string" || !f.min || !f.max || !isNum(f.min.x) || !isNum(f.max.x)) throw new Error("Fixture '" + (f?.name ?? "?") + "' is malformed.");
     return { name: f.name, min: { x: f.min.x, y: f.min.y ?? 0, z: f.min.z ?? 0 }, max: { x: f.max.x, y: f.max.y ?? 0, z: f.max.z ?? 0 } };
   }) : [];
-  return { machine: typeof raw.machine === "string" ? raw.machine : "unnamed machine", limits, rapidFeed: isNum(raw?.rapidFeed) ? raw.rapidFeed : 5000, fixtures, feedLimit: isNum(raw?.feedLimit) ? raw.feedLimit : undefined };
+  
+  let stock = undefined;
+  if (raw?.stock && isNum(raw.stock.min?.x) && isNum(raw.stock.max?.x)) {
+    stock = {
+      min: { x: raw.stock.min.x, y: raw.stock.min.y ?? 0, z: raw.stock.min.z ?? 0 },
+      max: { x: raw.stock.max.x, y: raw.stock.max.y ?? 0, z: raw.stock.max.z ?? 0 }
+    };
+  }
+
+  return { machine: typeof raw.machine === "string" ? raw.machine : "unnamed machine", limits, rapidFeed: isNum(raw?.rapidFeed) ? raw.rapidFeed : 5000, fixtures, feedLimit: isNum(raw?.feedLimit) ? raw.feedLimit : undefined, stock };
 }

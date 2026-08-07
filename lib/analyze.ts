@@ -65,18 +65,45 @@ export function analyze(parse: ParseResult, workcell: Workcell, state?: MachineS
   }
   const add = (p: Vec3): Vec3 => ({ x: p.x + shift.x, y: p.y + shift.y, z: p.z + shift.z });
   let distanceMm = 0, rapidDistanceMm = 0, durationSec = 0;
+  let rapidInsideStock = false;
+  let cuttingIntersectsStock = false;
+  let cutBelowStock = false;
+  
+  const stockBox: FixtureBox | null = workcell.stock ? { name: "stock", min: workcell.stock.min, max: workcell.stock.max } : null;
+  let hasLinearMoves = false;
+
   for (const seg of parse.segments) {
     const from = add(seg.from); const to = add(seg.to); const d = distance(from, to); distanceMm += d;
     if (seg.motion === "rapid") { rapidDistanceMm += d; durationSec += (d / Math.max(1, workcell.rapidFeed)) * 60; } else { durationSec += (d / Math.max(1, seg.feed)) * 60; }
+    
     if (outOfLimits(from, workcell) || outOfLimits(to, workcell)) diagnostics.push({ code: "NF002", severity: "error", message: "Motion exceeds machine travel limits (line " + seg.line + ").", line: seg.line });
+    
     for (const f of workcell.fixtures) {
       if (segmentIntersectsBox(from, to, f)) diagnostics.push({ code: "NF001", severity: "error", message: "Toolpath intersects fixture '" + f.name + "' (line " + seg.line + ").", line: seg.line });
       else if (toolRadius > 0 && segmentIntersectsBox(from, to, sweptBox(f, toolRadius))) diagnostics.push({ code: "NF205", severity: "error", message: "Tool " + toolLabel + " sweeps into fixture '" + f.name + "' (line " + seg.line + "); the centerline clears it by less than the tool radius.", line: seg.line });
     }
+    
     if (seg.motion === "linear" && seg.feedSet && seg.feed > feedLimit) diagnostics.push({ code: "NF003", severity: "warning", message: "Feed " + Math.round(seg.feed) + " mm/min exceeds workcell feed limit " + feedLimit + " (line " + seg.line + ").", line: seg.line });
+    
     const horizontal = Math.abs(from.x - to.x) > 0.1 || Math.abs(from.y - to.y) > 0.1;
     if (seg.motion === "rapid" && horizontal && Math.min(from.z, to.z) < 2 && d > 0.1) diagnostics.push({ code: "NF004", severity: "warning", message: "Rapid traverse at low Z (" + Math.min(from.z, to.z).toFixed(2) + ") near line " + seg.line + ".", line: seg.line });
+
+    if (stockBox) {
+      if (seg.motion === "rapid" && segmentIntersectsBox(from, to, stockBox)) rapidInsideStock = true;
+      if (seg.motion === "linear") {
+        hasLinearMoves = true;
+        if (segmentIntersectsBox(from, to, stockBox)) cuttingIntersectsStock = true;
+        if (Math.min(from.z, to.z) < stockBox.min.z) cutBelowStock = true;
+      }
+    }
   }
+
+  if (stockBox) {
+    if (rapidInsideStock) diagnostics.push({ code: "NF006", severity: "error", message: "Rapid traverse (G0) intersects the declared stock volume. This is the #1 cause of crashes in hand/agent-edited code." });
+    if (cutBelowStock) diagnostics.push({ code: "NF008", severity: "error", message: "Cutting move goes below the bottom of the declared stock (Z < " + stockBox.min.z + "). Risk of cutting into the table or vise." });
+    if (hasLinearMoves && !cuttingIntersectsStock) diagnostics.push({ code: "NF007", severity: "warning", message: "Air cut: the toolpath contains cutting moves (G1) but none intersect the declared stock volume. Check your work offset." });
+  }
+
   if (!Number.isFinite(distanceMm) || !Number.isFinite(durationSec)) diagnostics.push({ code: "NF105", severity: "error", message: "Program produced non-finite geometry; the program cannot be validated." });
   const seen = new Set<string>();
   const deduped = diagnostics.filter((x) => { const k = x.code + "|" + (x.line ?? 0) + "|" + x.message; if (seen.has(k)) return false; seen.add(k); return true; });
