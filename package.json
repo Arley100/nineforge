@@ -10,7 +10,8 @@
     "start": "next start",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "check:example": "tsx cli/main.ts check public/examples/bracket.nc --workcell public/examples/bracket.workcell.json --state public/examples/bracket.state.json --stress"
+    "check:example": "tsx cli/main.ts check public/examples/bracket.nc --workcell public/examples/bracket.workcell.json --state public/examples/bracket.state.json --stress",
+    "demo:agent-loop": "tsx examples/agent-loop.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

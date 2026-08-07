@@ -47,12 +47,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
+  const safeArgs = args || {};
   
   if (name === "nineforge_check") {
     const report = check(
-      args.gcode as string,
-      args.workcellJson as string,
-      (args.stateJson as string) || null
+      safeArgs.gcode as string,
+      safeArgs.workcellJson as string,
+      (safeArgs.stateJson as string) || null
     );
     return {
       content: [{ type: "text", text: JSON.stringify(report, null, 2) }]
@@ -61,9 +62,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   
   if (name === "nineforge_fix") {
     try {
-      const workcell = parseWorkcell(args.workcellJson as string);
-      const parsed = parseGCode(args.gcode as string);
-      const fix = suggestFixes(args.gcode as string, workcell, parsed.segments);
+      const workcell = parseWorkcell(safeArgs.workcellJson as string);
+      const parsed = parseGCode(safeArgs.gcode as string);
+      const fix = suggestFixes(safeArgs.gcode as string, workcell, parsed.segments);
       return {
         content: [{ type: "text", text: JSON.stringify(fix, null, 2) }]
       };
