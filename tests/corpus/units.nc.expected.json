@@ -1,0 +1,50 @@
+[
+  {
+    "from": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "to": {
+      "x": 100,
+      "y": 0,
+      "z": 0
+    },
+    "motion": "rapid",
+    "feed": 500,
+    "feedSet": false,
+    "line": 2
+  },
+  {
+    "from": {
+      "x": 100,
+      "y": 0,
+      "z": 0
+    },
+    "to": {
+      "x": 127,
+      "y": 0,
+      "z": 0
+    },
+    "motion": "linear",
+    "feed": 254,
+    "feedSet": true,
+    "line": 4
+  },
+  {
+    "from": {
+      "x": 127,
+      "y": 0,
+      "z": 0
+    },
+    "to": {
+      "x": 150,
+      "y": 0,
+      "z": 0
+    },
+    "motion": "linear",
+    "feed": 254,
+    "feedSet": false,
+    "line": 6
+  }
+]
