@@ -13,12 +13,14 @@
     "check:example": "tsx cli/main.ts check public/examples/bracket.nc --workcell public/examples/bracket.workcell.json --state public/examples/bracket.state.json --stress"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@react-three/drei": "^9.122.0",
     "@react-three/fiber": "^8.18.0",
     "next": "^14.2.35",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "three": "^0.166.1"
+    "three": "^0.166.1",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",
@@ -28,8 +30,11 @@
     "autoprefixer": "^10.4.19",
     "postcss": "^8.4.39",
     "tailwindcss": "^3.4.7",
-    "tsx": "^4.19.2",
+    "tsx": "^4.23.10",
     "typescript": "^5.5.3",
     "vitest": "^4.1.10"
+  },
+  "bin": {
+    "nineforge-mcp": "npx tsx ./mcp/server.ts"
   }
 }
