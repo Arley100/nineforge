@@ -183,3 +183,22 @@ describe("G95 feed per revolution", () => {
     expect(r.segments[1].feed).toBe(200);
   });
 });
+
+
+describe("spindle state", () => {
+  it("blocks cutting moves when the spindle is explicitly off (NF109)", () => {
+    const r = analyze(parseGCode("G21 G90\nG0 Z5\nM5\nG1 X10 Y0 F500"), baseWc([], 1000));
+    expect(r.diagnostics.some((d) => d.code === "NF109")).toBe(true);
+    expect(r.verdict).toBe("block");
+  });
+  it("passes when M3 is active", () => {
+    const r = analyze(parseGCode("G21 G90\nM3 S1000\nG0 Z5\nG1 X10 Y0 F500"), baseWc([], 1000));
+    expect(r.diagnostics.filter((d) => d.severity === "error")).toHaveLength(0);
+    expect(r.verdict).toBe("pass");
+  });
+  it("blocks when S0 is programmed", () => {
+    const r = analyze(parseGCode("G21 G90\nM3 S0\nG0 Z5\nG1 X10 Y0 F500"), baseWc([], 1000));
+    expect(r.diagnostics.some((d) => d.code === "NF109")).toBe(true);
+    expect(r.verdict).toBe("block");
+  });
+});

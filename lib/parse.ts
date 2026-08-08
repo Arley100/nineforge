@@ -2,8 +2,6 @@ import { Diagnostic, ParseResult, Segment, Vec3 } from "./types";
 
 const IN_TO_MM = 25.4;
 const KNOWN_G = new Set([0, 1, 2, 3, 20, 21, 43, 44, 49, 90, 91, 94, 95]);
-// Motion-affecting commands we do not model. Fail closed: these command machine
-// motion the analyzer cannot see, so their presence must block, not merely note.
 const UNMODELED_MOTION_G = new Set([28, 30, 33, 41, 42, 53, 68, 73, 74, 76, 81, 82, 83, 84, 85, 86, 87, 88, 89, 92]);
 const CHORD_TOL_MM = 0.05;
 const MAX_ARC_STEPS = 256;
@@ -62,17 +60,18 @@ export function parseGCode(code: string): ParseResult {
   const noted = new Set<string>();
   const offsetsUsed: string[] = [];
   const toolsUsed: string[] = [];
-  let pos: Vec3 = { x: 0, y: 0, z: 0 }; // always stored in millimetres
+  let pos: Vec3 = { x: 0, y: 0, z: 0 };
   let feed = 500;
   let feedEverSet = false;
   let motion: Motion = "rapid";
   let units: "mm" | "in" = "mm";
   let incremental = false;
+  let toolComp: "none" | "g43" | "g44" = "none";
+  let hRef: string | null = null;
   let feedMode: "g94" | "g95" = "g94";
   let spindleSpeed = 0;
   let spindleEverSet = false;
-  let toolComp: "none" | "g43" | "g44" = "none";
-  let hRef: string | null = null;
+  let spindleState: "unknown" | "on" | "off" = "unknown";
   const note = (key: string, d: Diagnostic) => { if (!noted.has(key)) { noted.add(key); diagnostics.push(d); } };
 
   code.split(/\r?\n/).forEach((raw, idx) => {
@@ -112,20 +111,21 @@ export function parseGCode(code: string): ParseResult {
         else if (value === 94) feedMode = "g94";
         else if (value === 95) feedMode = "g95";
         else if (value >= 54 && value <= 59) { const name = "G" + value; if (!offsetsUsed.includes(name)) offsetsUsed.push(name); }
-        else if (UNMODELED_MOTION_G.has(value)) note("gmotion" + value, { code: "NF106", severity: "error", message: "G" + value + " commands machine motion that is not modeled (canned cycle / homing / offset shift); the program cannot be validated.", line: lineNo });
+        else if (UNMODELED_MOTION_G.has(value)) note("gmotion" + value, { code: "NF106", severity: "error", message: "G" + value + " commands machine motion that is not modeled; the program cannot be validated.", line: lineNo });
         else if (!KNOWN_G.has(value)) note("g" + value, { code: "NF102", severity: "info", message: "G" + value + " is not modeled and was ignored.", line: lineNo });
       } else if (letter === "X") next.x = incremental ? next.x + value * s : value * s;
       else if (letter === "Y") next.y = incremental ? next.y + value * s : value * s;
       else if (letter === "Z") next.z = incremental ? next.z + value * s : value * s;
       else if (letter === "I") { iVal = value * s; sawIJ = true; }
       else if (letter === "J") { jVal = value * s; sawIJ = true; }
-      else if (letter === "K") note("arcK", { code: "NF102", severity: "info", message: "K (arc center Z) is ignored; only XY-plane (G17) arcs are modeled.", line: lineNo });
+      else if (letter === "K") note("arcK", { code: "NF102", severity: "info", message: "K is ignored; only XY-plane arcs are modeled.", line: lineNo });
       else if (letter === "R") rVal = value * s;
       else if (letter === "H") hRef = "H" + String(value).padStart(2, "0");
-      else if (letter === "S") { spindleSpeed = value; spindleEverSet = true; }
       else if (letter === "F") { localFeed = value * s; localFeedSet = true; feedEverSet = true; }
       else if (letter === "T") { const name = "T" + String(value).padStart(2, "0"); if (!toolsUsed.includes(name)) toolsUsed.push(name); }
-      else if (letter === "M" || letter === "N" || letter === "S") {}
+      else if (letter === "M") { if (value === 3 || value === 4) spindleState = "on"; else if (value === 5) spindleState = "off"; }
+      else if (letter === "N") {}
+      else if (letter === "S") { spindleSpeed = value; spindleEverSet = true; if (value === 0) spindleState = "off"; else if (spindleState === "unknown") spindleState = "on"; }
       else note("word" + letter, { code: "NF102", severity: "info", message: "Word '" + letter + "' is not modeled and was ignored.", line: lineNo });
     }
 
@@ -139,23 +139,25 @@ export function parseGCode(code: string): ParseResult {
       }
       const push = (from: Vec3, to: Vec3, m: "rapid" | "linear", arc?: boolean) =>
         segments.push({ from: { ...from }, to: { ...to }, motion: m, feed: effectiveFeed, feedSet: localFeedSet, line: lineNo, ...(arc ? { arc: true } : {}) });
-      if ((localMotion === "linear" || isArc) && !feedEverSet) note("nofeed", { code: "NF104", severity: "warning", message: "Cutting move before any F word; a real controller may alarm. Assuming 500 mm/min for estimates.", line: lineNo });
+      if ((localMotion === "linear" || isArc) && !feedEverSet) note("nofeed", { code: "NF104", severity: "warning", message: "Cutting move before any F word.", line: lineNo });
+      if ((localMotion === "linear" || isArc) && feedEverSet && spindleState === "off") note("spindleOff", { code: "NF109", severity: "error", message: "Cutting move with spindle off (M5 or S0); risk of broken tool or jammed part.", line: lineNo });
+      
       if (isArc) {
         const dir: "cw" | "ccw" = localMotion === "cw" ? "cw" : "ccw";
         let center: { x: number; y: number } | null = null;
         if (rVal !== null) {
           center = centerFromR(pos, next, rVal, dir);
-          if (!center) diagnostics.push({ code: "NF103", severity: "error", message: "Arc radius R" + rVal + " cannot reach the endpoint (chord " + xyDist(pos, next).toFixed(3) + " mm); geometry checked as a straight chord.", line: lineNo });
+          if (!center) diagnostics.push({ code: "NF103", severity: "error", message: "Arc radius cannot reach endpoint.", line: lineNo });
         } else if (sawIJ) {
           center = { x: pos.x + iVal, y: pos.y + jVal };
           const r0 = Math.hypot(pos.x - center.x, pos.y - center.y);
           const r1 = Math.hypot(next.x - center.x, next.y - center.y);
-          if (Math.abs(r0 - r1) > Math.max(0.01, 0.0005 * r0)) diagnostics.push({ code: "NF103", severity: "error", message: "Arc radius mismatch: start radius " + r0.toFixed(3) + " mm vs end radius " + r1.toFixed(3) + " mm (I/J center is inconsistent with the endpoint).", line: lineNo });
+          if (Math.abs(r0 - r1) > Math.max(0.01, 0.0005 * r0)) diagnostics.push({ code: "NF103", severity: "error", message: "Arc radius mismatch.", line: lineNo });
         } else {
-          diagnostics.push({ code: "NF103", severity: "error", message: "Arc move (G2/G3) without I/J or R; geometry checked as a straight chord.", line: lineNo });
+          diagnostics.push({ code: "NF103", severity: "error", message: "Arc move without I/J or R.", line: lineNo });
         }
         if (center) {
-          note("arcModeled", { code: "NF100", severity: "info", message: "Arc moves are modeled as straight chords within " + CHORD_TOL_MM + " mm tolerance.", line: lineNo });
+          note("arcModeled", { code: "NF100", severity: "info", message: "Arc moves modeled within " + CHORD_TOL_MM + " mm tolerance.", line: lineNo });
           let prev = pos;
           for (const p of tessellateArc(pos, next, center, dir)) { push(prev, p, "linear", true); prev = p; }
         } else {
