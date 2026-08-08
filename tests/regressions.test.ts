@@ -166,3 +166,20 @@ describe("tool length offsets", () => {
     expect(r.verdict).toBe("block");
   });
 });
+
+
+describe("G95 feed per revolution", () => {
+  it("multiplies F by S when G95 is active", () => {
+    const r = parseGCode("G21 G90 G95\nS1000\nG1 X10 Y0 F0.2");
+    expect(r.segments[0].feed).toBeCloseTo(200, 5);
+  });
+  it("warns when G95 is active but no S word is set (NF108)", () => {
+    const r = parseGCode("G21 G90 G95\nG1 X10 Y0 F0.2");
+    expect(r.diagnostics.some((d) => d.code === "NF108")).toBe(true);
+  });
+  it("reverts to G94 correctly", () => {
+    const r = parseGCode("G21 G90 G95\nS1000\nG1 X10 Y0 F0.2\nG94\nG1 X20 Y0 F200");
+    expect(r.segments[0].feed).toBeCloseTo(200, 5);
+    expect(r.segments[1].feed).toBe(200);
+  });
+});

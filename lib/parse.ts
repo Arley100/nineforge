@@ -1,7 +1,7 @@
 import { Diagnostic, ParseResult, Segment, Vec3 } from "./types";
 
 const IN_TO_MM = 25.4;
-const KNOWN_G = new Set([0, 1, 2, 3, 20, 21, 43, 44, 49, 90, 91]);
+const KNOWN_G = new Set([0, 1, 2, 3, 20, 21, 43, 44, 49, 90, 91, 94, 95]);
 // Motion-affecting commands we do not model. Fail closed: these command machine
 // motion the analyzer cannot see, so their presence must block, not merely note.
 const UNMODELED_MOTION_G = new Set([28, 30, 33, 41, 42, 53, 68, 73, 74, 76, 81, 82, 83, 84, 85, 86, 87, 88, 89, 92]);
@@ -68,6 +68,9 @@ export function parseGCode(code: string): ParseResult {
   let motion: Motion = "rapid";
   let units: "mm" | "in" = "mm";
   let incremental = false;
+  let feedMode: "g94" | "g95" = "g94";
+  let spindleSpeed = 0;
+  let spindleEverSet = false;
   let toolComp: "none" | "g43" | "g44" = "none";
   let hRef: string | null = null;
   const note = (key: string, d: Diagnostic) => { if (!noted.has(key)) { noted.add(key); diagnostics.push(d); } };
@@ -106,6 +109,8 @@ export function parseGCode(code: string): ParseResult {
         else if (value === 49) toolComp = "none";
         else if (value === 90) incremental = false;
         else if (value === 91) incremental = true;
+        else if (value === 94) feedMode = "g94";
+        else if (value === 95) feedMode = "g95";
         else if (value >= 54 && value <= 59) { const name = "G" + value; if (!offsetsUsed.includes(name)) offsetsUsed.push(name); }
         else if (UNMODELED_MOTION_G.has(value)) note("gmotion" + value, { code: "NF106", severity: "error", message: "G" + value + " commands machine motion that is not modeled (canned cycle / homing / offset shift); the program cannot be validated.", line: lineNo });
         else if (!KNOWN_G.has(value)) note("g" + value, { code: "NF102", severity: "info", message: "G" + value + " is not modeled and was ignored.", line: lineNo });
@@ -117,6 +122,7 @@ export function parseGCode(code: string): ParseResult {
       else if (letter === "K") note("arcK", { code: "NF102", severity: "info", message: "K (arc center Z) is ignored; only XY-plane (G17) arcs are modeled.", line: lineNo });
       else if (letter === "R") rVal = value * s;
       else if (letter === "H") hRef = "H" + String(value).padStart(2, "0");
+      else if (letter === "S") { spindleSpeed = value; spindleEverSet = true; }
       else if (letter === "F") { localFeed = value * s; localFeedSet = true; feedEverSet = true; }
       else if (letter === "T") { const name = "T" + String(value).padStart(2, "0"); if (!toolsUsed.includes(name)) toolsUsed.push(name); }
       else if (letter === "M" || letter === "N" || letter === "S") {}
@@ -126,8 +132,13 @@ export function parseGCode(code: string): ParseResult {
     const isArc = localMotion === "cw" || localMotion === "ccw";
     const hasMotion = next.x !== pos.x || next.y !== pos.y || next.z !== pos.z || (isArc && sawIJ && xyDist(pos, next) < EPS && (Math.abs(iVal) > EPS || Math.abs(jVal) > EPS));
     if (hasMotion) {
+      let effectiveFeed = localFeed;
+      if (feedMode === "g95" && localFeedSet) {
+        if (!spindleEverSet) note("g95nospeed", { code: "NF108", severity: "warning", message: "G95 active but no S word set; assuming 1 RPM for feed estimates.", line: lineNo });
+        effectiveFeed = localFeed * Math.max(1, spindleSpeed);
+      }
       const push = (from: Vec3, to: Vec3, m: "rapid" | "linear", arc?: boolean) =>
-        segments.push({ from: { ...from }, to: { ...to }, motion: m, feed: localFeed, feedSet: localFeedSet, line: lineNo, ...(arc ? { arc: true } : {}) });
+        segments.push({ from: { ...from }, to: { ...to }, motion: m, feed: effectiveFeed, feedSet: localFeedSet, line: lineNo, ...(arc ? { arc: true } : {}) });
       if ((localMotion === "linear" || isArc) && !feedEverSet) note("nofeed", { code: "NF104", severity: "warning", message: "Cutting move before any F word; a real controller may alarm. Assuming 500 mm/min for estimates.", line: lineNo });
       if (isArc) {
         const dir: "cw" | "ccw" = localMotion === "cw" ? "cw" : "ccw";
