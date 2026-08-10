@@ -1,11 +1,17 @@
 import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { check } from "../lib/check";
 import { suggestFixes } from "../lib/fix";
 import { parseGCode } from "../lib/parse";
 import { parseWorkcell } from "../lib/workcell";
 
-const gcode0 = readFileSync("public/examples/bracket.nc", "utf8");
-const wcJson0 = readFileSync("public/examples/bracket.workcell.json", "utf8");
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const root = join(__dirname, "..");
+
+const gcode0 = readFileSync(join(root, "public/examples/bracket.nc"), "utf8");
+const wcJson0 = readFileSync(join(root, "public/examples/bracket.workcell.json"), "utf8");
 
 function codes(r: { diagnostics: { code: string }[] }): string {
   return r.diagnostics.map((d) => d.code).join(", ") || "none";

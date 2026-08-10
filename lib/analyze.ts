@@ -27,11 +27,19 @@ function distance(a: Vec3, b: Vec3): number { return Math.sqrt((b.x - a.x) ** 2 
 export function activeShift(parse: ParseResult, state?: MachineState | null): Vec3 {
   if (!state) return { x: 0, y: 0, z: 0 };
   const a = parse.assumptions;
-  const primaryName = a.offsetsUsed.find((o) => state.offsets[o]) ?? (state.offsets["G54"] ? "G54" : null);
-  return primaryName && state.offsets[primaryName] ? state.offsets[primaryName] : { x: 0, y: 0, z: 0 };
+  if (a.offsetsUsed.length > 0) {
+    const defined = a.offsetsUsed.find((o) => state.offsets[o]);
+    // Fail closed: a referenced-but-missing offset (NF201) must not silently re-anchor geometry to another coordinate system.
+    return defined ? state.offsets[defined] : { x: 0, y: 0, z: 0 };
+  }
+  return state.offsets["G54"] ?? { x: 0, y: 0, z: 0 };
 }
 
 function sweptBox(f: FixtureBox, radius: number): FixtureBox {
+  // Scope honesty: z is set to -1e9 (effectively -infinity) because the tool and its
+  // holder/spindle column extend upward from the tip. An overhead fixture must be
+  // flagged as a collision even if the tool tip passes below it, since the holder
+  // could strike it. We intentionally do not bound Z by tool length.
   return { name: f.name, min: { x: f.min.x - radius, y: f.min.y - radius, z: -1e9 }, max: { x: f.max.x + radius, y: f.max.y + radius, z: f.max.z } };
 }
 
