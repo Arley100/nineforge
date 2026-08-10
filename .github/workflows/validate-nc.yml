@@ -6,6 +6,18 @@ on:
     branches: [main]
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm test
+
   sarif:
     runs-on: ubuntu-latest
     permissions:
@@ -22,6 +34,9 @@ jobs:
       - name: Validate bracket example to SARIF
         run: npx tsx cli/sarif.ts public/examples/bracket.nc public/examples/bracket.workcell.json public/examples/bracket.state.json bracket.sarif
         continue-on-error: true
+      # clean must pass: guards against regressions in pass-detection.
+      - name: Assert clean example passes
+        run: npx tsx cli/main.ts check public/examples/clean.nc --workcell public/examples/clean.workcell.json --state public/examples/clean.state.json
       - name: Upload SARIF
         if: always()
         uses: github/codeql-action/upload-sarif@v3
