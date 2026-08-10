@@ -37,7 +37,7 @@
     "vitest": "^4.1.10"
   },
   "bin": {
-    "nineforge-mcp": "npx tsx ./mcp/server.ts",
-    "nineforge-sarif": "npx tsx ./cli/sarif.ts"
+    "nineforge-mcp": "./bin/nineforge-mcp.js",
+    "nineforge-sarif": "./bin/nineforge-sarif.js"
   }
 }
