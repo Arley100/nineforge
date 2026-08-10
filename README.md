@@ -278,3 +278,14 @@ Demo transcript (Gate 1 exit criterion):
 ```bash
 npm run demo:agent-loop
 ```
+## Python bindings (wedge)
+
+`python/nineforge.py` exposes `check(gcode, workcell, state=None)` for Python-side
+agent stacks (ROS 2 / LeRobot prototyping). It shells out to the CLI and returns the
+versioned report. A compiled PyPI/WASM distribution is roadmap work (PAI-301); set
+`NINEFORGE_REPO` to your checkout path if the module lives outside the repo.
+
+## Docker
+
+`docker build -t nineforge . && docker run -p 3000:3000 nineforge` serves the web UI
+(non-root user, healthcheck included).
