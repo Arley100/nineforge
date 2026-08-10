@@ -36,6 +36,10 @@ export function activeShift(parse: ParseResult, state?: MachineState | null): Ve
 }
 
 function sweptBox(f: FixtureBox, radius: number): FixtureBox {
+  // Scope honesty: z is set to -1e9 (effectively -infinity) because the tool and its
+  // holder/spindle column extend upward from the tip. An overhead fixture must be
+  // flagged as a collision even if the tool tip passes below it, since the holder
+  // could strike it. We intentionally do not bound Z by tool length.
   return { name: f.name, min: { x: f.min.x - radius, y: f.min.y - radius, z: -1e9 }, max: { x: f.max.x + radius, y: f.max.y + radius, z: f.max.z } };
 }
 

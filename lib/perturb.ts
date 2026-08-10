@@ -2,7 +2,23 @@ import { Workcell } from "./types";
 export type Perturbation = { id: string; name: string; apply: (gcode: string, workcell: Workcell) => { gcode: string; workcell: Workcell }; };
 function shiftFixture(w: Workcell, dx: number, dy: number): Workcell { return { ...w, fixtures: w.fixtures.map((f) => ({ ...f, min: { x: f.min.x + dx, y: f.min.y + dy, z: f.min.z }, max: { x: f.max.x + dx, y: f.max.y + dy, z: f.max.z } })) }; }
 function growFixtures(w: Workcell, margin: number): Workcell { return { ...w, fixtures: w.fixtures.map((f) => ({ ...f, min: { x: f.min.x - margin, y: f.min.y - margin, z: f.min.z }, max: { x: f.max.x + margin, y: f.max.y + margin, z: f.max.z } })) }; }
-function shiftCoords(gcode: string, dx: number, dy: number): string { return gcode.split(/\r?\n/).map((line) => { const clean = line.split(";")[0]; if (!clean.trim()) return line; return clean.split(/\s+/).map((w) => { const u = w.toUpperCase(); if (u.startsWith("X")) return "X" + (Number(u.slice(1)) + dx); if (u.startsWith("Y")) return "Y" + (Number(u.slice(1)) + dy); return w; }).join(" "); }).join("\n"); }
+function shiftCoords(gcode: string, dx: number, dy: number): string {
+  if (/\bG91\b/i.test(gcode)) {
+    // In incremental mode, shifting every coordinate word changes relative step sizes.
+    // A true work-zero shift requires tracking modal state; skip to avoid physically wrong geometry.
+    return gcode;
+  }
+  return gcode.split(/\r?\n/).map((line) => {
+    const clean = line.split(";")[0];
+    if (!clean.trim()) return line;
+    return clean.split(/\s+/).map((w) => {
+      const u = w.toUpperCase();
+      if (u.startsWith("X")) return "X" + (Number(u.slice(1)) + dx);
+      if (u.startsWith("Y")) return "Y" + (Number(u.slice(1)) + dy);
+      return w;
+    }).join(" ");
+  }).join("\n");
+}
 function scaleFeeds(gcode: string, factor: number): string { return gcode.split(/\r?\n/).map((line) => { const clean = line.split(";")[0]; if (!clean.trim()) return line; return clean.split(/\s+/).map((w) => { const u = w.toUpperCase(); if (u.startsWith("F")) return "F" + Math.round(Number(u.slice(1)) * factor); return w; }).join(" "); }).join("\n"); }
 export const PERTURBATIONS: Perturbation[] = [
   { id: "base", name: "Nominal workcell", apply: (g, w) => ({ gcode: g, workcell: w }) },
