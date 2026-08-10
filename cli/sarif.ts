@@ -13,9 +13,10 @@ const wcPath = args[1];
 const stPath = args[2];
 const outPath = args[3];
 
-const gcode = readFileSync(ncPath, "utf8");
-const wcJson = readFileSync(wcPath, "utf8");
-const stJson = stPath ? readFileSync(stPath, "utf8") : null;
+function readText(p: string): string { try { return readFileSync(p, "utf8"); } catch (e) { console.error("NineForge: cannot read " + p + " (" + (e instanceof Error ? e.message : String(e)) + ")"); process.exit(2); } }
+const gcode = readText(ncPath);
+const wcJson = readText(wcPath);
+const stJson = stPath ? readText(stPath) : null;
 
 const report = check(gcode, wcJson, stJson);
 // Relative POSIX-style paths so GitHub can map SARIF locations onto repo files.

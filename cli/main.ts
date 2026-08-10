@@ -9,15 +9,19 @@ function usage(): never { console.log("Usage: npx tsx cli/main.ts check <job.nc>
 const args = process.argv.slice(2);
 if (args[0] !== "check" || !args[1]) usage();
 const file = args[1];
-const wIdx = args.indexOf("--workcell");
-if (wIdx < 0 || !args[wIdx + 1]) usage();
-const sIdx = args.indexOf("--state");
+
+
+
 const asJson = args.includes("--json");
 const stress = args.includes("--stress");
 const strict = args.includes("--strict");
-const gcode = readFileSync(file, "utf8");
-const workcell = parseWorkcell(readFileSync(args[wIdx + 1], "utf8"));
-const state = sIdx >= 0 && args[sIdx + 1] ? parseState(readFileSync(args[sIdx + 1], "utf8")) : null;
+function flagValue(name: string): string | null { const i = args.indexOf(name); if (i < 0) return null; const v = args[i + 1]; if (!v || v.startsWith("--")) { console.error("NineForge: " + name + " requires a file path."); process.exit(2); } return v; }
+function readText(p: string, what: string): string { try { return readFileSync(p, "utf8"); } catch (e) { console.error("NineForge: cannot read " + what + " file: " + p + " (" + (e instanceof Error ? e.message : String(e)) + ")"); process.exit(2); } }
+const wcPath = flagValue("--workcell"); if (!wcPath) usage();
+const stPath = flagValue("--state");
+const gcode = readText(file, "program");
+const workcell = parseWorkcell(readText(wcPath, "workcell"));
+const state = stPath ? parseState(readText(stPath, "state")) : null;
 const result = analyze(parseGCode(gcode), workcell, state);
 const stressRows = stress ? PERTURBATIONS.map((p) => { const v = p.apply(gcode, workcell); const r = analyze(parseGCode(v.gcode), v.workcell, state); return { name: p.name, verdict: r.verdict }; }) : [];
 if (asJson) { console.log(JSON.stringify({ file, result, stress: stressRows }, null, 2)); } else {
