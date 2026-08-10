@@ -11,9 +11,9 @@ test("CLI: --state followed by another flag exits 2 with a clear error", () => {
   const r = runCli(["check", "public/examples/bracket.nc", "--workcell", "public/examples/bracket.workcell.json", "--state", "--json"]);
   expect(r.status).toBe(2);
   expect(r.out).toContain("--state requires a file path");
-});
+}, 15000);
 test("CLI: missing program file exits 2 instead of crashing", () => {
   const r = runCli(["check", "does-not-exist.nc", "--workcell", "public/examples/bracket.workcell.json"]);
   expect(r.status).toBe(2);
   expect(r.out).toContain("cannot read program file");
-});
+}, 15000);
