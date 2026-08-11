@@ -1,0 +1,9 @@
+{
+  "machine": "Test Machine",
+  "limits": {
+    "min": { "x": -1000, "y": -1000, "z": -1000 },
+    "max": { "x": 1000, "y": 1000, "z": 1000 }
+  },
+  "rapidFeed": 5000,
+  "fixtures": []
+}

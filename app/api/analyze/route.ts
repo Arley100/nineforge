@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { check } from "../../../lib/check";
+import { RuleSchema } from "../../../lib/rules";
 import { summarize } from "../../../lib/summarize";
 
 const MAX_GCODE_CHARS = 2000000;
