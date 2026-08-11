@@ -12,6 +12,7 @@ import { check } from "../lib/check.js";
 import { suggestFixes } from "../lib/fix.js";
 import { parseGCode } from "../lib/parse.js";
 import { parseWorkcell } from "../lib/workcell.js";
+import { RuleSchema } from "../lib/rules.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

@@ -289,3 +289,19 @@ versioned report. A compiled PyPI/WASM distribution is roadmap work (PAI-301); s
 
 `docker build -t nineforge . && docker run -p 3000:3000 nineforge` serves the web UI
 (non-root user, healthcheck included).
+
+
+## Custom Rule Engine (PAI-503)
+
+NineForge supports custom validation rules via YAML or JSON files. Rules are evaluated deterministically against the parsed G-code and machine state, adhering to the "fail closed" philosophy.
+
+### Supported Rule Types (v1.0)
+
+| Type | Description | Parameters |
+|------|-------------|------------|
+| `max_feed` | Ensures cutting feedrates do not exceed a limit. | `max` (number) |
+| `min_z` | Ensures Z coordinates do not go below a limit. | `min` (number) |
+| `max_tool_length` | Ensures tool lengths do not exceed a limit. | `max` (number) |
+
+### Example `rules.yaml`
+

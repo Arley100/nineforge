@@ -1,4 +1,5 @@
 import { AnalysisResult, Diagnostic, FixtureBox, MachineState, ParseResult, Vec3, Workcell } from "./types";
+import { RuleFile, evaluateRules } from "./rules";
 
 function segmentIntersectsBox(a: Vec3, b: Vec3, box: FixtureBox): boolean {
   let tmin = 0, tmax = 1;
@@ -43,7 +44,7 @@ function sweptBox(f: FixtureBox, radius: number): FixtureBox {
   return { name: f.name, min: { x: f.min.x - radius, y: f.min.y - radius, z: -1e9 }, max: { x: f.max.x + radius, y: f.max.y + radius, z: f.max.z } };
 }
 
-export function analyze(parse: ParseResult, workcell: Workcell, state?: MachineState | null): AnalysisResult {
+export function analyze(parse: ParseResult, workcell: Workcell, state?: MachineState | null, rules?: RuleFile): AnalysisResult {
   const diagnostics: Diagnostic[] = [...parse.diagnostics];
   if (workcell.feedLimit === undefined) diagnostics.push({ code: "NF005", severity: "info", message: "Workcell declares no feedLimit; assuming 1000 mm/min for feed checks." });
   const feedLimit = workcell.feedLimit ?? 1000;
@@ -123,6 +124,10 @@ export function analyze(parse: ParseResult, workcell: Workcell, state?: MachineS
     if (rapidInsideStock) diagnostics.push({ code: "NF006", severity: "error", message: "Rapid traverse (G0) intersects the declared stock volume. This is the #1 cause of crashes in hand/agent-edited code." });
     if (cutBelowStock) diagnostics.push({ code: "NF008", severity: "error", message: "Cutting move goes below the bottom of the declared stock (Z < " + stockBox.min.z + "). Risk of cutting into the table or vise." });
     if (hasLinearMoves && !cuttingIntersectsStock) diagnostics.push({ code: "NF007", severity: "warning", message: "Air cut: the toolpath contains cutting moves (G1) but none intersect the declared stock volume. Check your work offset." });
+  }
+
+  if (rules) {
+    diagnostics.push(...evaluateRules(parse, workcell, state ?? null, rules));
   }
 
   if (!Number.isFinite(distanceMm) || !Number.isFinite(durationSec)) diagnostics.push({ code: "NF105", severity: "error", message: "Program produced non-finite geometry; the program cannot be validated." });
