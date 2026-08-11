@@ -1,6 +1,6 @@
 {
   "name": "nineforge",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": false,
   "license": "MIT",
   "description": "A static analyzer and robustness screen for CNC G-code workcells.",
