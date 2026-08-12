@@ -32,6 +32,35 @@ NineForge's answer: fast, deterministic, CI-friendly checks that turn "the agent
 it's safe" into a reviewable evidence trail - and that **block** by default when
 evidence is missing.
 
+## Architecture
+
+Every surface area converges on the same fail-closed `check()` boundary, which returns
+a versioned report (`reportVersion: 1`) or converts SDK errors into `NF107` blocks.
+
+```
+  +----------------+  +----------------+  +----------------+  +----------------+
+  | Web UI         |  | CLI / SARIF /  |  | MCP server     |  | REST API       |
+  | (Next.js)      |  | CI workflow    |  | nineforge_*    |  | /api/analyze   |
+  |                |  |                |  |                |  | /api/batch     |
+  +-------+--------+  +-------+--------+  +-------+--------+  | /api/openapi   |
+          |                   |                   |          +-------+--------+
+          |                   |                   |                   |
+          +-------------------+-------------------+-------------------+
+                              |
+                              v
+                    +-------------------+      +----------------+
+                    | lib/check.ts      |      | Python bridge  |
+                    | fail-closed SDK   |<-----| dist/python-   |
+                    | boundary          |      | bridge.js      |
+                    +---------+---------+      | (stdin/stdout) |
+                              |                +----------------+
+                              v
+                    +-------------------+      +----------------+
+                    | parse / analyze / |----->| @nineforge/core|
+                    | rules / workcell  |      | ESM+CJS+d.ts   |
+                    +-------------------+      +----------------+
+```
+
 ## The validation state machine
 
 Every run moves through a deterministic pipeline. Any `error`-severity diagnostic at any
@@ -214,8 +243,10 @@ Note: **NF101 is retired** - G91 incremental is now fully modeled.
 
 ## Evidence, not vibes
 
-- **56 tests**: unit, regression, property-based invariants (chain continuity, mm/inch
-  round-trip stability, monotonic fixture growth, finite stats), and differential.
+- **82 tests**: unit, regression, property-based invariants (chain continuity, mm/inch
+  round-trip stability, monotonic fixture growth, finite stats), differential, and
+  integration tests for the rule engine, REST batch endpoint, OpenAPI spec, and the
+  compiled core/Python bridges.
 - **Differential corpus:** `tests/corpus/*.nc` with golden segment dumps. Regenerate
   consciously with `npx tsx scripts/dump-corpus.ts`; the `.expected.json` diff is a
   review surface, never a silent change.
@@ -278,22 +309,35 @@ Demo transcript (Gate 1 exit criterion):
 ```bash
 npm run demo:agent-loop
 ```
-## Python bindings (wedge)
 
-`python/nineforge.py` exposes `check(gcode, workcell, state=None)` for Python-side
-agent stacks (ROS 2 / LeRobot prototyping). It shells out to the CLI and returns the
-versioned report. A compiled PyPI/WASM distribution is roadmap work (PAI-301); set
-`NINEFORGE_REPO` to your checkout path if the module lives outside the repo.
+## Python bindings (PAI-301, replaces the subprocess wedge)
+
+`python/nineforge.py` exposes `check(gcode, workcell, state=None, rules=None)` for
+Python-side agent stacks (ROS 2 / LeRobot prototyping) and returns the versioned
+report.
+
+Since v0.7.0 the binding no longer shells out to the CLI with temp files: it pipes a
+JSON payload over stdin to a compiled esbuild bundle (`dist/python-bridge.js`), so the
+only runtime requirement is Node.js >= 18. Build it once with:
+
+```bash
+npm install
+npm run build:python
+```
+
+Set `NINEFORGE_REPO` to your checkout path if the module lives outside the repo.
+A true PyPI/WASM distribution remains roadmap work.
 
 ## Docker
 
 `docker build -t nineforge . && docker run -p 3000:3000 nineforge` serves the web UI
 (non-root user, healthcheck included).
 
-
 ## Custom Rule Engine (PAI-503)
 
-NineForge supports custom validation rules via YAML or JSON files. Rules are evaluated deterministically against the parsed G-code and machine state, adhering to the "fail closed" philosophy.
+NineForge supports custom validation rules via YAML or JSON files. Rules are evaluated
+deterministically against the parsed G-code and machine state, adhering to the "fail
+closed" philosophy.
 
 ### Supported Rule Types (v1.0)
 
@@ -305,41 +349,33 @@ NineForge supports custom validation rules via YAML or JSON files. Rules are eva
 
 ### Example `rules.yaml`
 
+```yaml
+version: "1.0"
+rules:
+  - id: "NO_HIGH_FEED"
+    severity: "error"
+    type: "max_feed"
+    params:
+      max: 500
+  - id: "SAFE_DEPTH"
+    severity: "warning"
+    type: "min_z"
+    params:
+      min: -10
+```
 
-## Python Bindings (PAI-301)
+### Usage
 
-NineForge provides a compiled JavaScript bridge for Python users, replacing the legacy subprocess wedge. It pipes JSON directly to the Node.js runtime via `stdin`, eliminating temporary files and the `tsx` dependency.
-
-### Setup
-
-1. Ensure Node.js (>= 18) is installed and available in your PATH.
-2. Build the compiled bridge:
-   ```bash
-   npm install
-   npm run build:python
-
-   
-## REST API (PAI-302/303)
-
-NineForge exposes a stateless REST API for programmatic validation. Because `check()` is designed as a fail-closed package boundary, the API never throws 500 errors on bad inputs—invalid payloads result in HTTP 200 responses with a `block` verdict and `NF107` diagnostics.
-
-### Endpoints
-
-#### `POST /api/analyze`
-Analyze a single G-code program.
-**Request Body:**
-```json
-{
-  "gcode": "G21\nG90\n...",
-  "workcell": "{ ... } or { ... object ... }",
-  "state": "{ ... } (optional)",
-  "rules": { "version": "1.0", "rules": [...] }
-}
-
+- **CLI:** `npx tsx cli/main.ts check job.nc --workcell cell.json --rules rules.yaml`
+- **API:** include a `rules` object in the body of `/api/analyze` or `/api/batch`
+- **MCP:** pass `rulesJson` to `nineforge_check`
 
 ## REST API (PAI-302/303)
 
-NineForge exposes a stateless REST API for programmatic validation. Because `check()` is designed as a fail-closed package boundary, the API never throws 500 errors on bad inputs -- invalid payloads result in HTTP 200 responses with a `block` verdict and `NF107` diagnostics.
+NineForge exposes a stateless REST API for programmatic validation. Because `check()`
+is designed as a fail-closed package boundary, the API never throws 500 errors on bad
+inputs -- invalid payloads result in HTTP 200 responses with a `block` verdict and
+`NF107` diagnostics.
 
 ### Endpoints
 
@@ -353,3 +389,73 @@ Analyze a single G-code program. Request body:
   "state": "JSON string or object (optional)",
   "rules": { "version": "1.0", "rules": [ ... ] }
 }
+```
+
+Response:
+
+```json
+{ "result": { "verdict": "pass|caution|block", "diagnostics": [...], "reportVersion": 1 }, "summary": "..." }
+```
+
+#### `POST /api/batch`
+Analyze up to 10 G-code programs in one request (ideal for AI agent loops). The body is
+an array of jobs, each with an optional `id`:
+
+```json
+[
+  { "id": "var_1", "gcode": "...", "workcell": "..." },
+  { "id": "var_2", "gcode": "...", "workcell": "..." }
+]
+```
+
+Response:
+
+```json
+{ "results": [ { "id": "var_1", "result": {...}, "summary": "..." }, ... ] }
+```
+
+A malformed job cannot sink the batch: it receives a per-job `error` while healthy jobs
+still get full reports.
+
+#### `GET /api/openapi`
+Returns the OpenAPI 3.1 specification for the API (importable into Swagger UI or
+codegen tooling).
+
+## Core Library (PAI-101)
+
+NineForge is available as a standalone Node.js library (`@nineforge/core`), emitting
+ESM, CJS, and TypeScript declarations. It exposes a fail-closed, strictly-typed API
+surface for building plugins, custom CI tools, or embedding validation into other
+agent frameworks.
+
+### Installation
+*(Once published to npm)*
+
+```bash
+npm install @nineforge/core
+```
+
+### Usage (ESM)
+
+```typescript
+import { check } from "@nineforge/core";
+
+const gcode = "G21\nG90\nG0 X0 Y0 Z5\nG1 X10 Y10 F1000\nM30\n";
+const workcell = {
+  machine: "My Machine",
+  limits: { min: { x: -100, y: -100, z: -100 }, max: { x: 100, y: 100, z: 100 } },
+  rapidFeed: 5000,
+  fixtures: []
+};
+
+const report = check(gcode, JSON.stringify(workcell));
+console.log(report.verdict); // "pass" | "caution" | "block"
+```
+
+### API Surface
+- `check(gcode, workcellJson, stateJson?, rules?)` - The fail-closed package boundary.
+- `parseGCode(code)` - Parse G-code into segments.
+- `analyze(parse, workcell, state?, rules?)` - Core validation logic.
+- `evaluateRules(parse, workcell, state, rules)` - Evaluate custom PAI-503 rules.
+- Full TypeScript definitions included for all domain types (`Workcell`,
+  `MachineState`, `Report`, etc.).
