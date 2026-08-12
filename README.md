@@ -337,11 +337,19 @@ Analyze a single G-code program.
 }
 
 
-## Core Library (PAI-101)
+## REST API (PAI-302/303)
 
-NineForge is available as a standalone Node.js library (`@nineforge/core`), emitting ESM, CJS, and TypeScript declarations. It exposes a fail-closed, strictly-typed API surface for building plugins, custom CI tools, or embedding validation into other agent frameworks.
+NineForge exposes a stateless REST API for programmatic validation. Because `check()` is designed as a fail-closed package boundary, the API never throws 500 errors on bad inputs -- invalid payloads result in HTTP 200 responses with a `block` verdict and `NF107` diagnostics.
 
-### Installation
-*(Once published to npm)*
-```bash
-npm install @nineforge/core
+### Endpoints
+
+#### `POST /api/analyze`
+Analyze a single G-code program. Request body:
+
+```json
+{
+  "gcode": "G21\nG90\n...",
+  "workcell": "JSON string or object",
+  "state": "JSON string or object (optional)",
+  "rules": { "version": "1.0", "rules": [ ... ] }
+}
