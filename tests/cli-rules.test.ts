@@ -20,5 +20,5 @@ describe("CLI Rule Engine Integration", () => {
       expect(output.result.verdict).toBe("block");
       expect(output.result.diagnostics.some((d: any) => d.code === "NO_HIGH_FEED")).toBe(true);
     }
-  });
+  }, 15000); // Increased timeout for npx tsx cold starts
 });

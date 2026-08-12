@@ -318,3 +318,21 @@ NineForge provides a compiled JavaScript bridge for Python users, replacing the 
    npm install
    npm run build:python
 
+   
+## REST API (PAI-302/303)
+
+NineForge exposes a stateless REST API for programmatic validation. Because `check()` is designed as a fail-closed package boundary, the API never throws 500 errors on bad inputs—invalid payloads result in HTTP 200 responses with a `block` verdict and `NF107` diagnostics.
+
+### Endpoints
+
+#### `POST /api/analyze`
+Analyze a single G-code program.
+**Request Body:**
+```json
+{
+  "gcode": "G21\nG90\n...",
+  "workcell": "{ ... } or { ... object ... }",
+  "state": "{ ... } (optional)",
+  "rules": { "version": "1.0", "rules": [...] }
+}
+
