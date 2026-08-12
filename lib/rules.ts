@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { readFileSync } from "node:fs";
-import yaml from "js-yaml";
+import { load as yamlLoad } from "js-yaml";
 import { Diagnostic, ParseResult, Workcell, MachineState } from "./types";
 
 export const RuleSchema = z.object({
@@ -21,7 +21,7 @@ export function loadRules(path: string): RuleFile {
   let raw: unknown;
   try {
     if (ext.endsWith(".yaml") || ext.endsWith(".yml")) {
-      raw = yaml.load(content);
+      raw = yamlLoad(content);
     } else if (ext.endsWith(".json")) {
       raw = JSON.parse(content);
     } else {

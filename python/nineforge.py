@@ -1,37 +1,51 @@
-"""Thin Python binding for NineForge (PAI-301 wedge).
-
-Shells out to the NineForge CLI and returns the versioned JSON report.
-Requires a nineforge checkout with `npm install` done. Point NINEFORGE_REPO
-at the checkout if this module is used from outside the repo.
-Honesty note: this is an integration wedge, not a PyPI distribution yet.
+"""
+Real Python bindings for NineForge via compiled JS entry point.
+Replaces the subprocess wedge (PAI-301). Requires Node.js to run the bundled bridge.
 """
 import json
-import os
 import subprocess
-import tempfile
 from pathlib import Path
+from typing import Any, Dict, Optional, Union
 
+def _bridge_path() -> Path:
+    # Resolves to <repo_root>/dist/python-bridge.js
+    return Path(__file__).parent.parent / "dist" / "python-bridge.js"
 
-def _repo() -> Path:
-    env = os.environ.get("NINEFORGE_REPO")
-    if env:
-        return Path(env)
-    return Path(__file__).resolve().parent.parent
+def check(
+    gcode: str, 
+    workcell: Union[str, Dict[str, Any]], 
+    state: Optional[Union[str, Dict[str, Any]]] = None,
+    rules: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    bridge = _bridge_path()
+    if not bridge.exists():
+        raise RuntimeError(
+            f"Compiled NineForge bridge not found at {bridge}. "
+            "Run 'npm run build:python' in the repo root first."
+        )
 
+    payload = {
+        "gcode": gcode,
+        "workcell": workcell,
+        "state": state,
+        "rules": rules
+    }
 
-def check(gcode: str, workcell, state=None) -> dict:
-    repo = _repo()
-    with tempfile.TemporaryDirectory() as td:
-        nc = Path(td, "job.nc")
-        wc = Path(td, "wc.json")
-        nc.write_text(gcode, encoding="utf-8")
-        wc.write_text(workcell if isinstance(workcell, str) else json.dumps(workcell), encoding="utf-8")
-        cmd = ["npx", "tsx", "cli/main.ts", "check", str(nc), "--workcell", str(wc), "--json"]
-        if state is not None:
-            st = Path(td, "st.json")
-            st.write_text(state if isinstance(state, str) else json.dumps(state), encoding="utf-8")
-            cmd += ["--state", str(st)]
-        p = subprocess.run(cmd, cwd=repo, capture_output=True, text=True, shell=(os.name == "nt"))
-        if not p.stdout.strip():
-            raise RuntimeError("nineforge CLI failed (%s): %s" % (p.returncode, p.stderr.strip()))
+    try:
+        p = subprocess.run(
+            ["node", str(bridge)],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            encoding="utf-8"
+        )
+    except FileNotFoundError:
+        raise RuntimeError("Node.js is required to run NineForge Python bindings but was not found in PATH.")
+
+    if p.returncode != 0:
+        raise RuntimeError(f"NineForge bridge failed: {p.stderr.strip()}")
+    
+    try:
         return json.loads(p.stdout)["result"]
+    except (json.JSONDecodeError, KeyError) as e:
+        raise RuntimeError(f"Failed to parse bridge output: {e}")
