@@ -336,3 +336,12 @@ Analyze a single G-code program.
   "rules": { "version": "1.0", "rules": [...] }
 }
 
+
+## Core Library (PAI-101)
+
+NineForge is available as a standalone Node.js library (`@nineforge/core`), emitting ESM, CJS, and TypeScript declarations. It exposes a fail-closed, strictly-typed API surface for building plugins, custom CI tools, or embedding validation into other agent frameworks.
+
+### Installation
+*(Once published to npm)*
+```bash
+npm install @nineforge/core
