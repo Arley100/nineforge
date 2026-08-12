@@ -305,3 +305,16 @@ NineForge supports custom validation rules via YAML or JSON files. Rules are eva
 
 ### Example `rules.yaml`
 
+
+## Python Bindings (PAI-301)
+
+NineForge provides a compiled JavaScript bridge for Python users, replacing the legacy subprocess wedge. It pipes JSON directly to the Node.js runtime via `stdin`, eliminating temporary files and the `tsx` dependency.
+
+### Setup
+
+1. Ensure Node.js (>= 18) is installed and available in your PATH.
+2. Build the compiled bridge:
+   ```bash
+   npm install
+   npm run build:python
+
