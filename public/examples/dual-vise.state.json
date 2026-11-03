@@ -1,0 +1,5 @@
+{
+  "control": "fanuc-like",
+  "offsets": { "G54": { "x": -150, "y": 0, "z": 0 }, "G55": { "x": 100, "y": 0, "z": 0 } },
+  "tools": { "T1": { "diameter": 10, "length": 75 }, "T2": { "diameter": 6, "length": 60 } }
+}

@@ -5,6 +5,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -12,11 +15,24 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - run: npm ci
-      - run: npx tsc --noEmit
+      - run: npm run typecheck
       - run: npm test
+      - run: npm run build
+      - run: npm run build:lib
+      - name: Smoke-test the published package (ESM + CJS)
+        run: |
+          node scripts/smoke-core.mjs
+          node -e "if (require('./dist/core/core.js').check('G0 X1', '{}').verdict !== 'block') process.exit(1)"
+      - name: Python bindings
+        run: python -m unittest discover python
+      - name: Regression suite
+        run: node dist/cli.mjs suite public/examples/suite.json
 
   sarif:
     runs-on: ubuntu-latest
@@ -27,12 +43,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - run: npm ci
       # bracket is expected to block (exit 1); we still want the SARIF uploaded.
       - name: Validate bracket example to SARIF
-        run: npx tsx cli/sarif.ts public/examples/bracket.nc public/examples/bracket.workcell.json public/examples/bracket.state.json bracket.sarif
+        run: npx tsx cli/main.ts check public/examples/bracket.nc --workcell public/examples/bracket.workcell.json --state public/examples/bracket.state.json --sarif bracket.sarif
         continue-on-error: true
       # clean must pass: guards against regressions in pass-detection.
       - name: Assert clean example passes

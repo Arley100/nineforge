@@ -29,7 +29,7 @@ describe("SARIF output", () => {
     expect(res[1].level).toBe("warning");
   });
   
-  it("maps info severity to note and omits locations if no line", () => {
+  it("maps info severity to note and anchors file-level findings to line 1 (GitHub requires a location)", () => {
     const result: AnalysisResult = {
       verdict: "caution",
       stats: { segments: 0, distanceMm: 0, rapidDistanceMm: 0, durationSec: 0 },
@@ -37,6 +37,6 @@ describe("SARIF output", () => {
     };
     const sarif = toSarif(result);
     expect(sarif.runs[0].results[0].level).toBe("note");
-    expect(sarif.runs[0].results[0].locations).toBeUndefined();
+    expect(sarif.runs[0].results[0].locations[0].physicalLocation.region.startLine).toBe(1);
   });
 });

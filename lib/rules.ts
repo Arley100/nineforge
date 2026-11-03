@@ -1,93 +1,65 @@
 import { z } from "zod";
-import { readFileSync } from "node:fs";
 import { load as yamlLoad } from "js-yaml";
-import { Diagnostic, ParseResult, Workcell, MachineState } from "./types";
+import { Diagnostic, MachineState, ParseResult, Workcell } from "./types";
 
+const rule = <T extends string, P extends z.ZodRawShape>(type: T, params: P) => z.object({
+  id: z.string().regex(/^[A-Z0-9_]+$/, "Rule ID must be uppercase alphanumeric/underscore"),
+  severity: z.enum(["error", "warning", "info"]),
+  type: z.literal(type),
+  params: z.object(params),
+});
+
+/** Custom shop rules. Params are typed per rule so a typo fails validation instead of silently disabling the rule. */
 export const RuleSchema = z.object({
   version: z.literal("1.0"),
-  rules: z.array(z.object({
-    id: z.string().regex(/^[A-Z0-9_]+$/, "Rule ID must be uppercase alphanumeric/underscore"),
-    severity: z.enum(["error", "warning", "info"]),
-    type: z.enum(["max_feed", "min_z", "max_tool_length"]),
-    params: z.record(z.string(), z.union([z.number(), z.string()]))
-  })).min(1, "At least one rule is required")
+  rules: z.array(z.discriminatedUnion("type", [
+    rule("max_feed", { max: z.number().positive() }),
+    rule("min_z", { min: z.number() }),
+    rule("max_tool_length", { max: z.number().positive() }),
+    rule("min_rapid_z", { min: z.number() }),
+  ])).min(1, "At least one rule is required"),
 });
 
 export type RuleFile = z.infer<typeof RuleSchema>;
 
-export function loadRules(path: string): RuleFile {
-  const content = readFileSync(path, "utf8");
-  const ext = path.toLowerCase();
-  let raw: unknown;
-  try {
-    if (ext.endsWith(".yaml") || ext.endsWith(".yml")) {
-      raw = yamlLoad(content);
-    } else if (ext.endsWith(".json")) {
-      raw = JSON.parse(content);
-    } else {
-      throw new Error("Rules file must be .yaml, .yml, or .json");
-    }
-  } catch (err: any) {
-    if (err.message && err.message.startsWith("Rules file must be")) throw err;
-    throw new Error("Failed to parse rules file: " + (err.message || err));
+/** Accepts a YAML/JSON string or an already-parsed object; throws a readable error when invalid. */
+export function parseRules(input: unknown): RuleFile {
+  let raw = input;
+  if (typeof input === "string") {
+    try { raw = yamlLoad(input); } catch (e) { throw new Error("Failed to parse rules file: " + (e instanceof Error ? e.message : String(e))); }
   }
-  
   const parsed = RuleSchema.safeParse(raw);
-  if (!parsed.success) {
-    throw new Error("Rules file failed schema validation: " + parsed.error.message);
-  }
+  if (!parsed.success) throw new Error("Rules file failed schema validation:\n" + z.prettifyError(parsed.error));
   return parsed.data;
 }
 
-export function evaluateRules(
-  parse: ParseResult,
-  workcell: Workcell,
-  state: MachineState | null,
-  rules: RuleFile
-): Diagnostic[] {
-  const diagnostics: Diagnostic[] = [];
-  for (const rule of rules.rules) {
-    if (rule.type === "max_feed") {
-      const max = Number(rule.params.max);
-      if (!Number.isFinite(max)) continue;
-      for (const seg of parse.segments) {
-        if (seg.motion !== "rapid" && seg.feedSet && seg.feed > max) {
-          diagnostics.push({
-            code: rule.id,
-            severity: rule.severity,
-            message: `Feed ${seg.feed} mm/min exceeds custom limit ${max} mm/min.`,
-            line: seg.line
-          });
-        }
+/** Rules are evaluated in program coordinates (what the programmer wrote). */
+export function evaluateRules(parse: ParseResult, _workcell: Workcell, state: MachineState | null, rules: RuleFile): Diagnostic[] {
+  const out: Diagnostic[] = [];
+  for (const r of rules.rules) {
+    const hit = (message: string, line?: number) => out.push({ code: r.id, severity: r.severity, message, ...(line ? { line } : {}) });
+    if (r.type === "max_feed") {
+      let last = NaN;
+      for (const s of parse.segments) {
+        if (s.motion === "rapid") continue;
+        if (s.feed > r.params.max && s.feed !== last) hit("Feed " + Math.round(s.feed) + " mm/min exceeds custom limit " + r.params.max + " mm/min.", s.line);
+        last = s.feed;
       }
-    } else if (rule.type === "min_z") {
-      const minZ = Number(rule.params.min);
-      if (!Number.isFinite(minZ)) continue;
-      for (const seg of parse.segments) {
-        if (seg.from.z < minZ || seg.to.z < minZ) {
-          diagnostics.push({
-            code: rule.id,
-            severity: rule.severity,
-            message: `Z coordinate violates minimum limit ${minZ} mm.`,
-            line: seg.line
-          });
-        }
+    } else if (r.type === "min_z") {
+      // Every point after the (unknown) start is some segment's endpoint.
+      for (const s of parse.segments) if (s.to.z < r.params.min) hit("Z " + +s.to.z.toFixed(3) + " violates minimum limit " + r.params.min + " mm.", s.line);
+    } else if (r.type === "min_rapid_z") {
+      for (const s of parse.segments) {
+        const from = s.anchor ? s.to : s.from; // never judge an unknown start position
+        const horizontal = from.x !== s.to.x || from.y !== s.to.y;
+        if (s.motion === "rapid" && horizontal && s.anchor !== "none" && Math.min(from.z, s.to.z) < r.params.min) hit("Rapid traverse below the clearance plane Z" + r.params.min + ".", s.line);
       }
-    } else if (rule.type === "max_tool_length") {
-      if (!state) continue; 
-      const maxLen = Number(rule.params.max);
-      if (!Number.isFinite(maxLen)) continue;
-      for (const tName of parse.assumptions.toolsUsed) {
-        const tool = state.tools[tName];
-        if (tool && tool.length !== undefined && tool.length > maxLen) {
-          diagnostics.push({
-            code: rule.id,
-            severity: rule.severity,
-            message: `Tool ${tName} length ${tool.length} mm exceeds limit ${maxLen} mm.`
-          });
-        }
+    } else if (state) {
+      for (const t of parse.assumptions.toolsUsed) {
+        const length = state.tools[t]?.length;
+        if (length !== undefined && length > r.params.max) hit("Tool " + t + " length " + length + " mm exceeds limit " + r.params.max + " mm.");
       }
     }
   }
-  return diagnostics;
+  return out;
 }

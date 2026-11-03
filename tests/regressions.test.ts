@@ -70,8 +70,7 @@ describe("units", () => {
 describe("fixes", () => {
   it("caps feeds at the declared workcell limit", () => {
     const wc = baseWc([], 500);
-    const seg = parseGCode("G21 G90\nG1 X10 Y0 F1200").segments;
-    const fix = suggestFixes("G21 G90\nG1 X10 Y0 F1200", wc, seg);
+    const fix = suggestFixes("G21 G90\nG1 X10 Y0 F1200", wc);
     expect(fix.gcode).toContain("F500");
     const r = analyze(parseGCode(fix.gcode), fix.workcell);
     expect(r.diagnostics.filter((d) => d.code === "NF003")).toHaveLength(0);
@@ -96,8 +95,10 @@ describe("fail-closed semantics for unmodeled motion", () => {
     const p = parseGCode("G21 G91\nG1 X10 Y0 F100\nG1 X10 Y0");
     expect(p.segments[0].to.x).toBeCloseTo(10, 6);
     expect(p.segments[1].to.x).toBeCloseTo(20, 6);
+    // Incremental cuts from an unknown start are modeled but cannot be placed: disclosed, not trusted.
     const r = analyze(p, baseWc([], 1000));
-    expect(r.verdict).toBe("pass");
+    expect(r.diagnostics.map((d) => d.code)).toContain("NF111");
+    expect(r.verdict).toBe("caution");
   });
   it("degrades canned cycles to at least caution", () => {
     const r = analyze(parseGCode("G21 G90\nG0 X10 Y10\nG81 Z-5 R2 F200"), baseWc([], 1000));

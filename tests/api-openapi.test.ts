@@ -3,8 +3,7 @@ import { GET } from "../app/api/openapi/route";
 
 describe("API OpenAPI Endpoint (PAI-302)", () => {
   it("returns a valid OpenAPI 3.1 spec", async () => {
-    const req = new Request("http://localhost/api/openapi");
-    const res = await GET(req);
+    const res = await GET();
     expect(res.status).toBe(200);
     
     const spec = await res.json();

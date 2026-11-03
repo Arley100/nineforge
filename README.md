@@ -2,122 +2,66 @@
 
 **Unit testing for the physical world.**
 
-NineForge is an open-source, deterministic validation layer for AI-generated machine
-programs. It sits between the agent that writes motion code and the hardware that would
-execute it: simulating, scoring, and stress-testing every program before anything moves.
+[![validate-nc](https://github.com/Arley100/nineforge/actions/workflows/validate-nc.yml/badge.svg)](https://github.com/Arley100/nineforge/actions/workflows/validate-nc.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-The current wedge is **CNC validation**. The engine is designed to be machine-class
-agnostic (see roadmap).
+NineForge is an open-source, deterministic validation layer for machine programs written by
+AI agents (or people). It sits between whatever writes the motion code and the hardware that
+would execute it, and checks every program against the *actual* workcell (travel limits,
+fixtures, stock) and machine state (work offsets, tool table) **before anything moves**.
 
-> **Scope honesty:** NineForge models deterministic geometry, process rules, and state
-> cross-checks, and it reports what it does *not* model. It complements - never
-> replaces - CAM verification and a physical prove-out.
+The current focus is **3-axis CNC milling G-code**. The engine is meant to cover other
+machine classes over time (see the [roadmap](#gated-roadmap)).
 
-## The problem
+> **Scope honesty:** NineForge models deterministic geometry, process rules and state
+> cross-checks, and it reports what it does *not* model. It complements, and never
+> replaces, CAM verification and a physical prove-out.
 
-AI agents now author machine programs (G-code, motion plans) at a scale no human review
-process can absorb. In software, a hallucination is a bad string. On hardware, a
-hallucinated work offset or a toolpath through a clamp is a broken fixture, a scrapped
-part, or an injured operator.
+## Why
 
-Existing safety nets don't fit the agent era:
+AI agents now write machine programs faster than anyone can review them. In software, a
+hallucination is a bad string. On a machine, a hallucinated work offset or a toolpath
+through a clamp is a broken fixture, a scrapped part or an injured operator.
 
-- **CAM verification** is human-paced and GUI-bound - it wasn't built to be called in an
-  agent loop.
-- **Physical prove-outs** are slow, expensive, and don't scale with token throughput.
-- **Nothing produces machine-checkable evidence** that a program was validated against
-  the *actual* workcell state before deployment.
+- **CAM verification** is human-paced and GUI-bound; it can't sit inside an agent loop.
+- **Physical prove-outs** are slow and expensive, and they don't scale with token throughput.
+- **Nothing produces machine-checkable evidence** that a program was validated against the
+  real workcell state.
 
-NineForge's answer: fast, deterministic, CI-friendly checks that turn "the agent says
-it's safe" into a reviewable evidence trail - and that **block** by default when
-evidence is missing.
+NineForge's answer is fast, deterministic, CI-friendly checks that **block by default when
+evidence is missing**, plus signed reports that prove what was checked.
 
-## Architecture
+## Quickstart
 
-Every surface area converges on the same fail-closed `check()` boundary, which returns
-a versioned report (`reportVersion: 1`) or converts SDK errors into `NF107` blocks.
+Requires Node.js 20.9 or newer (22 LTS recommended).
 
-```
-  +----------------+  +----------------+  +----------------+  +----------------+
-  | Web UI         |  | CLI / SARIF /  |  | MCP server     |  | REST API       |
-  | (Next.js)      |  | CI workflow    |  | nineforge_*    |  | /api/analyze   |
-  |                |  |                |  |                |  | /api/batch     |
-  +-------+--------+  +-------+--------+  +-------+--------+  | /api/openapi   |
-          |                   |                   |          +-------+--------+
-          |                   |                   |                   |
-          +-------------------+-------------------+-------------------+
-                              |
-                              v
-                    +-------------------+      +----------------+
-                    | lib/check.ts      |      | Python bridge  |
-                    | fail-closed SDK   |<-----| dist/python-   |
-                    | boundary          |      | bridge.js      |
-                    +---------+---------+      | (stdin/stdout) |
-                              |                +----------------+
-                              v
-                    +-------------------+      +----------------+
-                    | parse / analyze / |----->| @nineforge/core|
-                    | rules / workcell  |      | ESM+CJS+d.ts   |
-                    +-------------------+      +----------------+
+```bash
+npm install
+npm run dev            # web UI at http://127.0.0.1:5173
 ```
 
-## The validation state machine
+Check a program from the terminal (the same commands work in PowerShell, cmd and bash):
 
-Every run moves through a deterministic pipeline. Any `error`-severity diagnostic at any
-stage forces the verdict to `block`; warnings downgrade to `caution`; `pass` requires a
-clean trace end to end. Missing evidence is never guessed silently - it is disclosed
-(NF005, NF100, NF204, NF206) or blocked (NF105, NF106, NF107, NF207).
-
-```
-  program.nc + workcell.json + state.json
-                   |
-                   v
-           +----------------+  segments, units, assumptions
-           | 1. PARSE       |  (offsetsUsed, toolsUsed, envelope,
-           +----------------+   toolComp, arc tessellation <= 0.05 mm)
-                   |
-                   v
-           +----------------+  assumptions vs machine state vs workcell;
-           | 2. PREFLIGHT   |  program calls G55/T07, state defines
-           +----------------+  neither -> hard BLOCK before motion
-                   |
-                   v
-           +----------------+  toolpath vs fixtures/stock/limits,
-           | 3. ANALYZE     |  tool radius + length, feed limits
-           +----------------+
-                   |
-                   v
-           +----------------+
-           | 4. VERDICT     |  block | caution | pass
-           +----------------+
-                   |
-                   v
-           +----------------+  diagnostics + stats -> versioned report
-           | 5. REPORT      |  (reportVersion: 1) for CLI, UI, MCP, SARIF
-           +----------------+
-                   |
-                   v
-   +---------------+---------------+
-   |                               |
-   v                               v
-+----------------+          +----------------+
-| 6. FIX         |          | 7. STRESS      |
-| typed actions: |          | perturb setup, |
-| gcode-edit vs  |          | survives k/N   |
-| physical-action|          +----------------+
-+----------------+
+```bash
+npm run nf -- check public/examples/mismatch.nc --workcell public/examples/mismatch.workcell.json --state public/examples/mismatch.state.json
 ```
 
-Stress never *upgrades* a verdict; it only adds evidence. `survives 0/10` means the
-baseline and every tested perturbation (fixture shifts, zero offsets, feed overrides)
-still fail.
+Run with Docker:
+
+```bash
+docker build -t nineforge .
+docker run --rm -p 3000:3000 nineforge     # http://localhost:3000
+```
 
 ## UI tour
 
+Every screenshot below is captured from the real app by `scripts/capture-screenshots.cjs`
+(see [docs/SCREENSHOTS.md](docs/SCREENSHOTS.md)).
+
 ### 01 - Block: toolpath vs fixture
 ![Block: toolpath vs fixture](docs/screenshots/01-block-collision.png)
-The bracket program drives the tool through the clamp volume. NineForge blocks the run
-and points at the offending lines.
+Flagged lines turn pink in the 3D view. Clicking a diagnostic selects its line in the editor
+and highlights the move in white.
 
 ### 02 - Pre-flight: setup mismatch
 ![Pre-flight: setup mismatch](docs/screenshots/02-preflight-mismatch.png)
@@ -130,89 +74,340 @@ A program whose assumptions match the workcell passes every modeled check.
 
 ### 04 - Stress screen
 ![Stress screen](docs/screenshots/04-stress-screen.png)
-The stress screen perturbs the setup (fixture shifts, zero offsets, feed overrides) and
-re-runs the checks.
+The stress screen perturbs the setup (fixture shifts, work-zero errors in X, Y and Z, fixture
+wear, feed overrides) and re-runs every check, showing which codes fail under each
+perturbation.
 
 ### 05 - Suggested fixes
 ![Suggested fixes](docs/screenshots/05-suggested-fixes.png)
-Typed suggestions: `gcode-edit` actions an agent may auto-apply (cap feeds at the
-workcell limit), and `physical-action` actions a human must perform (move the clamp -
-editing the file does not move the clamp).
+Typed suggestions: `gcode-edit` actions an agent may apply (feeds capped at the workcell
+limit, unit- and G95-aware) and `physical-action` actions a human must perform (move the
+clamp; editing the file does not move the clamp).
 
 ### 06 - CLI
 ![CLI mismatch run](docs/screenshots/06-cli-mismatch.png)
 Same engine, no browser.
 
-## Quickstart
+### 07 - Multi-operation programs
+![Two vises, two tools](docs/screenshots/07-multi-op.png)
+A CAM-style program with two vises (`G54`/`G55`) and two tools with `G43` length
+compensation. Every move is checked under its *own* work offset and tool radius.
 
-```bash
-npm install
-npm run dev
+### 08 - Custom shop rules
+![Custom rules](docs/screenshots/08-custom-rules.png)
+YAML rules layered on top of the built-in checks: here a 1000 mm/min feed is inside the
+machine's limit but breaks the shop's 500 mm/min rule.
+
+### 09 - Evidence: regression suites and signed reports
+![Suite and attestation](docs/screenshots/09-cli-evidence.png)
+
+## CLI
+
+```text
+nineforge check <program.nc> --workcell <cell.json> [--state <state.json>] [--rules <rules.yaml>]
+                [--json] [--stress] [--strict] [--sarif <out.sarif>]
+                [--attest <out.json> [--sign <private.pem>]] [--history <runs.jsonl>]
+nineforge suite <suite.json> [--json]
+nineforge verify <attestation.json> [--key <public.pem>] [--program <file>] [--workcell <file>] [--state <file>] [--rules <file>]
+nineforge keygen [--out <dir>]
 ```
 
-Open the URL Next.js prints (default http://localhost:3000).
+From a checkout, run it as `npm run nf -- <args>` or `npx tsx cli/main.ts <args>`. After
+`npm run build:lib` (or installing the package) it is also available as `nineforge`.
 
-Headless (CI / agent integration):
+| Exit code | Meaning |
+|-----------|---------|
+| 0 | Pass (or caution without `--strict`); suite and verification succeeded |
+| 1 | Blocked, a stress perturbation blocked, a suite expectation failed, verification failed, or the verified report's verdict is block |
+| 2 | Usage or input error (missing file, bad flag, invalid rules file) |
 
-```bash
-npx tsx cli/main.ts check public/examples/mismatch.nc \
-  --workcell public/examples/mismatch.workcell.json \
-  --state public/examples/mismatch.state.json
+Output is colored on a terminal; set `NO_COLOR=1` to disable it. Invalid workcell or state
+JSON never crashes the CLI: it becomes a fail-closed `NF107` block.
+
+## Evidence over time
+
+**Regression suites.** A suite pins the expected verdict (and optionally the codes) for every
+program that runs on a workcell. A program change that breaks a known-good job fails the suite:
+
+```json
+{
+  "workcell": "cell.json",
+  "state": "state.json",
+  "jobs": [
+    { "program": "op10.nc", "expect": "pass" },
+    { "program": "known-crash.nc", "expect": "block", "codes": ["NF001"] }
+  ]
+}
 ```
 
-SARIF output for inline PR annotations (exit code 1 on `block`):
+Paths are relative to the manifest; `workcell`, `state` and `rules` can be set per job.
+`public/examples/suite.json` covers every bundled example and runs in CI.
+
+**Signed reports.** An attestation records the report, the engine version and the SHA-256 of
+every input, signed with Ed25519:
 
 ```bash
-npx tsx cli/sarif.ts program.nc workcell.json [state.json] [out.sarif]
+npm run nf -- keygen --out keys                       # keys/nineforge.key stays private
+npm run nf -- check part.nc --workcell cell.json --state state.json --attest part.attest.json --sign keys/nineforge.key
+npm run nf -- verify part.attest.json --key keys/nineforge.pub --program part.nc --workcell cell.json --state state.json
 ```
 
-`.github/workflows/validate-nc.yml` runs this on every PR and uploads the report, so
-findings annotate `.nc` files in the "Files changed" tab.
+`verify` fails if the report was edited, if any supplied input differs from what was checked,
+or if a different key signed it. Without `--key` it checks integrity only and says so. An
+authentic report whose verdict is BLOCK still exits 1, so a pipeline gate cannot wave it through.
+Private keys (`*.key`, `*.pem`) are git-ignored; keep them in your CI secret store.
 
-Agent-loop demo (Gate 1 exit criterion):
+**Run history.** `--history runs.jsonl` appends one line per check (time, program path and
+hash, verdict, codes) for audit trails and dashboards.
+
+**CI and SARIF.** `--sarif out.sarif` writes SARIF 2.1.0 with a location for every finding,
+so findings annotate `.nc` files in a pull request's "Files changed" tab.
+`.github/workflows/validate-nc.yml` typechecks, tests, builds, runs the Python tests and the
+regression suite, and uploads SARIF on every PR.
+
+## Integrations
+
+### REST API
+
+The web app exposes:
+
+- `POST /api/analyze`: `{ gcode, workcell, state?, rules? }` returns `{ result, reportVersion, summary }`.
+  `workcell`/`state` may be JSON strings or objects; `rules` a YAML/JSON string or an object.
+  Limits: 2,000,000 characters of G-code and 500,000 per JSON document (HTTP 413 above them).
+- `POST /api/batch`: an array of up to 10 jobs (each with an optional `id`). A malformed job
+  gets its own `error`; healthy jobs still get full reports.
+- `GET /api/openapi`: the OpenAPI 3.1 specification.
 
 ```bash
-npm run demo:agent-loop
+curl -s -X POST http://127.0.0.1:5173/api/analyze -H "content-type: application/json" \
+  -d '{"gcode":"G21 G90\nG0 X0 Y0 Z5\nG1 X10 F500","workcell":{"limits":{"min":{"x":-100,"y":-100,"z":-50},"max":{"x":100,"y":100,"z":50}}}}'
 ```
 
-More examples live in `public/examples/` (`bracket`, `mismatch`, `clean`, `messy`,
-`overtravel`), each as a `program / workcell / state` triple.
+### MCP server (agent integration)
+
+```bash
+npm run mcp            # or: npx tsx mcp/server.ts, or nineforge-mcp once built
+```
+
+```json
+{
+  "mcpServers": {
+    "nineforge": { "command": "npx", "args": ["tsx", "mcp/server.ts"], "cwd": "/path/to/nineforge" }
+  }
+}
+```
+
+Tools (all take `gcode`, `workcellJson`, optional `stateJson` and `rules`):
+`nineforge_check` (versioned report), `nineforge_fix` (typed actions: `gcode-edit` actions are
+auto-applicable, `physical-action` never are) and `nineforge_stress`.
+
+`npm run demo:agent-loop` shows an agent closing the loop: block, apply the feed fix, issue
+the clamp work order, pass.
+
+### Core library
+
+```bash
+npm run build:lib      # dist/core: ESM + CJS + type declarations
+```
+
+```ts
+import { check, parseRules } from "nineforge";
+
+const report = check(gcode, workcellJson, stateJson, parseRules(rulesYaml));
+console.log(report.verdict); // "pass" | "caution" | "block"
+```
+
+`check()` is the fail-closed boundary: it never throws, and invalid workcell or state JSON
+becomes an `NF107` block report. The package also exports `parseGCode`, `analyze`,
+`placeSegments`, `suggestFixes`, `stress`, `toSarif`, `runSuite`, `attest`,
+`verifyAttestation`, `loadRules` and all domain types.
+
+### Python
+
+`python/nineforge.py` pipes a job to the bundled bridge (`dist/python-bridge.js`), so the
+only runtime requirement is Node.js:
+
+```bash
+npm run build:lib
+python -m unittest discover python
+```
+
+```python
+import nineforge
+report = nineforge.check(gcode, workcell_json, state_json, rules=rules_yaml)
+```
+
+`workcell`/`state` may be JSON text or dicts; `rules` YAML/JSON text or a dict. Set
+`NINEFORGE_REPO` to your checkout if the module lives outside the repo.
+
+## Input files
+
+Coordinates: the program is written in work coordinates. NineForge adds the active work
+offset to every move (and, without `G43`, shifts the tool tip down by the tool length) to
+get the **workcell frame**, where `limits`, `fixtures` and `stock` live. All units are mm.
+
+**Workcell** (`*.workcell.json`)
+
+```json
+{
+  "machine": "Desktop CNC Mill",
+  "limits": { "min": { "x": -250, "y": -200, "z": -100 }, "max": { "x": 250, "y": 200, "z": 100 } },
+  "rapidFeed": 5000,
+  "feedLimit": 1000,
+  "fixtures": [{ "name": "clamp", "min": { "x": 80, "y": -10, "z": -5 }, "max": { "x": 120, "y": 10, "z": 20 } }],
+  "stock": { "min": { "x": 0, "y": 0, "z": -20 }, "max": { "x": 100, "y": 60, "z": 0 } }
+}
+```
+
+`limits` is required. `rapidFeed` (default 5000 mm/min) is used for time estimates.
+Without `feedLimit`, 1000 mm/min is assumed and disclosed (`NF005`). `stock` is optional.
+Box corners may be given in any order.
+
+**Machine state** (`*.state.json`, optional)
+
+```json
+{
+  "control": "sim",
+  "offsets": { "G54": { "x": 0, "y": 0, "z": 0 }, "G55": { "x": 150, "y": 0, "z": 0 } },
+  "tools": { "T1": { "diameter": 6, "length": 50 } }
+}
+```
+
+Offsets `G54`-`G59` and `G59.1`-style names are supported; `T1`, `T01` and `T001` all name tool 1.
+
+**Custom rules** (`*.yaml` or `*.json`, optional)
+
+```yaml
+version: "1.0"
+rules:
+  - { id: NO_HIGH_FEED, severity: error, type: max_feed, params: { max: 500 } }        # mm/min
+  - { id: FLOOR, severity: error, type: min_z, params: { min: -25 } }                 # program Z
+  - { id: CLEARANCE_PLANE, severity: warning, type: min_rapid_z, params: { min: 3 } } # horizontal rapids
+  - { id: SHORT_TOOLS, severity: warning, type: max_tool_length, params: { max: 80 } }
+```
+
+Rules are evaluated in program coordinates. Parameters are validated per rule type, so a
+typo such as `maximum:` fails loudly instead of silently disabling the rule.
+
+## Architecture
+
+Every surface converges on the same fail-closed `check()` boundary, which returns a versioned
+report (`reportVersion: 1`).
+
+```
+  +----------------+  +----------------+  +----------------+  +----------------+
+  | Web UI         |  | CLI: check,    |  | MCP server     |  | REST API       |
+  | (Next.js)      |  | suite, verify, |  | nineforge_*    |  | /api/analyze   |
+  |                |  | SARIF, attest  |  |                |  | /api/batch     |
+  +-------+--------+  +-------+--------+  +-------+--------+  +-------+--------+
+          |                   |                   |                   |
+          +-------------------+---------+---------+-------------------+
+                                        |
+                                        v
+                              +-------------------+      +----------------+
+                              | lib/check.ts      |<-----| Python bridge  |
+                              | fail-closed SDK   |      | (stdin/stdout) |
+                              +---------+---------+      +----------------+
+                                        |
+                                        v
+                              +-------------------+      +----------------+
+                              | parse / analyze / |----->| nineforge core |
+                              | rules / perturb   |      | ESM+CJS+d.ts   |
+                              +-------------------+      +----------------+
+```
+
+## The validation pipeline
+
+Any `error` forces the verdict to `block`; warnings downgrade to `caution`; `pass` requires a
+clean trace end to end. Missing evidence is disclosed (`NF005`, `NF100`, `NF110`, `NF206`)
+or blocks (`NF105`, `NF106`, `NF107`, `NF207`); it is never guessed silently.
+
+```
+  program.nc + workcell.json + state.json (+ rules.yaml)
+                   |
+                   v
+           +----------------+  segments with their own work offset, tool and
+           | 1. PARSE       |  length compensation; arcs in G17/G18/G19 tessellated
+           +----------------+  to <= 0.05 mm; unknown start position tracked
+                   |
+                   v
+           +----------------+  program calls G55/T07, state defines neither
+           | 2. PREFLIGHT   |  -> hard BLOCK before motion
+           +----------------+
+                   |
+                   v
+           +----------------+  toolpath vs fixtures, stock and travel; tool
+           | 3. ANALYZE     |  radius + length; feeds; spindle; custom rules
+           +----------------+
+                   |
+                   v
+           +----------------+  block | caution | pass
+           | 4. VERDICT     |
+           +----------------+
+                   |
+                   v
+           +----------------+  versioned report for CLI, UI, MCP, SARIF;
+           | 5. REPORT      |  optional signed attestation
+           +----------------+
+                   |
+   +---------------+---------------+
+   v                               v
++----------------+          +----------------+
+| 6. FIX         |          | 7. STRESS      |
+| gcode-edit vs  |          | perturb setup, |
+| physical-action|          | survives k/N   |
++----------------+          +----------------+
+```
+
+Stress never *upgrades* a verdict; it only adds evidence. `survives 0/11` means the baseline
+and every perturbation still fail.
 
 ## What we model - and what we don't
 
-*(updated 2026-08-08; supersedes all earlier scope lists in this document)*
-
 **Modeled exactly** (locked by the differential corpus and property tests):
 
-- Linear/rapid motion (G0/G1), modal state, and space-less words (`G1X10Y10`)
-- Arcs G2/G3 in the XY plane (G17): I/J and R forms, helical Z, full circles,
-  tessellated to <= 0.05 mm chord tolerance (NF100 discloses this)
-- G90/G91 absolute/incremental; G20/G21 units with mid-program switch integrity
-- Work offsets G54-G59 applied to geometry checks (NF204 discloses the multi-offset
-  simplification)
-- Exact slab-method segment/fixture intersection (no tunneling through thin fixtures)
-- Tool-radius sweep (NF205); tool-length compensation semantics: with G43/G44 the tip
-  follows programmed Z; without it the tip is assumed `length` mm below programmed Z
-  (NF206); unresolvable H references block (NF207)
-- Stock volume checks: rapid-in-stock (NF006), air-cut (NF007), table crash (NF008)
+- Linear/rapid motion (G0/G1), modal state, space-less words (`G1X10Y10`); G-codes in a
+  block take effect before its axis words (`X1 G20` is one inch)
+- Arcs G2/G3 in all three planes (G17 I/J, G18 I/K, G19 J/K) in I/J/K and R forms, helical
+  moves and full circles, tessellated to <= 0.05 mm chord tolerance (`NF100` discloses this)
+- G90/G91, G20/G21 including mid-program unit switches, G94/G95 (feed per revolution
+  uses the programmed S)
+- Work offsets G54-G59 and G59.x **per move**: multi-fixture programs are checked under the
+  offset each operation actually uses, and the traverse when switching offsets is checked
+  from where the machine really is (axes not yet re-programmed stay in their old offset)
+- Tools **per move** (T preselect + M6): each move uses its own tool radius (`NF205`) and
+  length; with G43 the tip follows programmed Z, without it the tip is assumed `length` mm
+  below (`NF206`); G43 with an unknown H, or the H of a different tool than the loaded one,
+  blocks (`NF207`). Toggling G43 without moving keeps later incremental Z moves exact
+- Exact slab-method segment/box intersection (no tunneling through thin fixtures)
+- Stock volume: rapid-in-stock (`NF006`), air cut (`NF007`), cutting below the stock (`NF008`)
+- Spindle state: cutting after M5, with S0, or after a tool change without M3/M4 blocks
+  (`NF109`); nothing after M2/M30 runs
+- Unknown positions are never invented: at program start (and for Z after a tool change)
+  a move is checked once its endpoint is fully programmed, at that endpoint. Earlier rapids
+  are disclosed (`NF110`); earlier *cutting* moves are a warning (`NF111`)
+- Block delete (`/`): both paths are checked, with the switch off and on
 
-**Fail closed (block, never guessed):**
+**Fail closed (block, never guessed)** - `NF106`:
 
-- Unparseable words and non-finite geometry (NF105)
-- Canned cycles/homing (G28/G30/G33, G73-G89), cutter comp (G41/G42), machine
-  coordinates (G53), rotation (G68), offset shift (G92) - NF106
-- Arcs with inconsistent or missing center data (NF103)
-- Invalid workcell/state JSON via the SDK (NF107)
+- **Every G-code outside an allowlist** of modeled or geometry-neutral codes (G0-G4, G8, G9,
+  G15, G17-G21, G40, G43, G49, G50, G50.1, G54-G59.x, G61-G64, G67, G69, G80, G90, G91,
+  G91.1, G94, G95, G97-G99, G103, G187). That includes homing and machine coordinates
+  (G28/G30, G53), probing, canned cycles, cutter compensation (G41/G42), G44, coordinate
+  transforms (G10, G16, G51, G52, G68, G92, extended offsets G54.1/G154/G110+), inverse-time
+  feed, splines and macro calls
+- Subprogram flow (M97, M98, M99, M198) and rotary/secondary axes (A B C U V W)
+- Unparseable words or text, non-finite geometry, and programs that expand to more than
+  500,000 moves (`NF105`); inconsistent arc data (`NF103`); invalid workcell/state JSON
+  through the SDK (`NF107`)
 
 **Not modeled (reported or disclosed, never silently trusted):**
 
-- Other planes (G18/G19), K word, spindle/program-flow M and S words (except the NF104
-  cutting-without-feed warning)
-- G95 feed-per-revolution: feeds are interpreted as mm/min (roadmap item)
-- Cutting forces, tool deflection, machine dynamics, controller lookahead, material
-  behavior
-
-Note: **NF101 is retired** - G91 incremental is now fully modeled.
+- Unknown address letters (E, ...) are reported (`NF102`); N, O, P, Q, L, D are parameters
+- After a tool change, X and Y are assumed unchanged (true for most mills; machines that move
+  X/Y to a change position should re-state X/Y after M6, as CAM posts do)
+- Constant surface speed (G96) and other lathe semantics
+- Cutting forces, tool deflection, machine dynamics, controller lookahead, material behavior
 
 ### Diagnostic codes
 
@@ -220,8 +415,8 @@ Note: **NF101 is retired** - G91 incremental is now fully modeled.
 |------|----------|---------|
 | NF001 | error | Toolpath intersects a fixture |
 | NF002 | error | Motion exceeds machine travel limits |
-| NF003 | warning | Feed exceeds the workcell `feedLimit` |
-| NF004 | warning | Rapid traverse at low Z |
+| NF003 | warning | Feed exceeds the workcell `feedLimit` (reported where the feed takes effect) |
+| NF004 | warning | Horizontal rapid less than 2 mm above the stock top (or Z0) |
 | NF005 | info | No `feedLimit` declared; assuming 1000 mm/min |
 | NF006 | error | Rapid (G0) intersects the declared stock volume |
 | NF007 | warning | Air cut: cutting moves never intersect the stock |
@@ -231,231 +426,54 @@ Note: **NF101 is retired** - G91 incremental is now fully modeled.
 | NF103 | error | Arc center data missing or inconsistent |
 | NF104 | warning | Cutting move before any F word |
 | NF105 | error | Unparseable word / non-finite geometry |
-| NF106 | error | Unmodeled motion command (canned cycle, homing, comp, G53/G68/G92) |
+| NF106 | error | Unmodeled motion, transform, subprogram or rotary axis |
 | NF107 | error | Invalid workcell/state JSON (SDK fail-closed) |
+| NF108 | warning | G95 feed per revolution without an S word |
+| NF109 | error | Cutting move with the spindle off (M5 or S0) |
+| NF110 | info | Start position unknown; early rapids not geometry-checked |
+| NF111 | warning | Cutting move from an unknown position (not geometry-checked) |
 | NF201 | error | Work offset referenced but not in machine state |
 | NF202 | error | Tool referenced but not in tool table |
-| NF203 | error | Work envelope exceeds machine travel |
-| NF204 | info | Multiple offsets referenced; first defined offset used |
+| NF203 | error | Work envelope under an offset exceeds machine travel |
 | NF205 | error | Tool radius sweeps a fixture |
 | NF206 | warning | No G43 active; tip assumed `length` mm below programmed Z |
-| NF207 | error | G43/G44 H reference not resolvable in tool table |
+| NF207 | error | G43 H not in the tool table, or not the loaded tool |
+
+Retired: `NF101` (G91 is modeled) and `NF204` (multiple work offsets are now modeled per move).
 
 ## Evidence, not vibes
 
-- **82 tests**: unit, regression, property-based invariants (chain continuity, mm/inch
-  round-trip stability, monotonic fixture growth, finite stats), differential, and
-  integration tests for the rule engine, REST batch endpoint, OpenAPI spec, and the
-  compiled core/Python bridges.
+- **165+ tests** (`npm test`): unit, regression, property-based invariants (chain
+  continuity, mm/inch round-trip stability, monotonic fixture growth, finite stats),
+  differential corpus, rule engine, fixes and stress, REST endpoints, signed attestations,
+  regression suites, CLI and MCP end-to-end, plus Python binding tests.
 - **Differential corpus:** `tests/corpus/*.nc` with golden segment dumps. Regenerate
-  consciously with `npx tsx scripts/dump-corpus.ts`; the `.expected.json` diff is a
-  review surface, never a silent change.
-- **CI:** `validate-nc` uploads SARIF on every PR; Code Scanning ingests it.
+  deliberately with `npx tsx scripts/dump-corpus.ts`; the `.expected.json` diff is a review
+  surface, never a silent change.
+- **Docs are tested too:** the diagnostic table above must match the engine's code catalog.
 
 ## Gated roadmap
 
-We ship by evidence gates, not vibes. A gate closes only when its evidence (tests,
-examples, screenshots, docs) is in the repo.
+A gate closes only when its evidence (tests, examples, screenshots, docs) is in the repo.
 
 | Gate | Status | Goal | Exit criteria |
 |------|--------|------|---------------|
-| **0** | shipped (v0.3) | Deterministic 3-axis validation: parse -> preflight -> analyze -> verdict -> report, fixes, stress, CLI. | This repo: examples, tests, screenshots. |
-| **1** | shipped | Agent-native: versioned report SDK (`check()`, `reportVersion: 1`), MCP server (`nineforge_check` / `nineforge_fix`), SARIF + CI annotations, agent-loop demo. | `npm run demo:agent-loop` closes block -> self-correct -> pass with no human in the loop. |
-| **2** | in progress | Deeper physics. Shipped: tool diameter (NF205) and length/comp semantics (NF206/NF207). Remaining: 4/5-axis kinematics and rotary envelopes. | 5-axis example suite with evidence parity to Gate 0, plus an updated "not modeled" list. |
+| **0** | shipped | Deterministic 3-axis validation: parse, preflight, analyze, verdict, report, fixes, stress, CLI. | Examples, tests, screenshots in this repo. |
+| **1** | shipped | Agent-native: versioned report SDK, MCP server, SARIF + CI annotations, agent-loop demo. | `npm run demo:agent-loop` closes block -> self-correct -> pass with no human in the loop. |
+| **2** | in progress | Deeper physics. Shipped: tool diameter and length/comp semantics per move, multi-offset programs, arcs in all planes. Remaining: 4/5-axis kinematics and rotary envelopes. | 5-axis example suite with evidence parity to Gate 0, plus an updated "not modeled" list. |
 | **3** | open | Second machine class (e.g. FDM motion plans) with the same pipeline and a new workcell schema. | New example suite + screenshots; engine core untouched by machine-specific code. |
-| **4** | in progress | Evidence over time. Shipped: regression + differential suites in-repo. Remaining: run history, per-workcell suites, signed reports. | A regression suite that catches a deliberately broken program change on a real workcell. |
+| **4** | shipped | Evidence over time: regression and differential suites, per-workcell suites, run history, signed reports. | A regression suite catches a deliberately broken program change on a real workcell (`tests/features.test.ts`). |
 
 ## Contributing
 
-Start with `docs/SCREENSHOTS.md` for the capture guide, and keep the honesty policy:
-every new capability must document what it does **not** model.
+PRs must keep `npm run typecheck`, `npm test` and `npm run build` green. Fail closed by
+default, disclose every assumption, and document what a new capability does **not** model.
+If you change the UI, re-capture the screenshots ([docs/SCREENSHOTS.md](docs/SCREENSHOTS.md)).
+Corpus goldens are reviewed, never silently regenerated. See [CHANGELOG.md](CHANGELOG.md).
 
-PRs must keep `npm run test` and `npx tsc --noEmit` green. Corpus goldens are reviewed,
-never silently regenerated. Fail closed by default; disclose every assumption.
+Found a false positive or a missed crash? Use the **report** link next to any diagnostic in
+the UI, or open an issue with a minimal program, workcell and state.
 
 ## License
 
 MIT - see [LICENSE](LICENSE).
-
-## MCP server (AI agent integration)
-
-NineForge ships an MCP server so coding agents can validate G-code while writing it.
-
-Run it from the repo root:
-
-```bash
-npx tsx ./mcp/server.ts
-```
-
-Example client config (Claude Code / Cursor / any MCP client):
-
-```json
-{
-  "mcpServers": {
-    "nineforge": {
-      "command": "npx",
-      "args": ["tsx", "./mcp/server.ts"],
-      "cwd": "/path/to/nineforge"
-    }
-  }
-}
-```
-
-Tools: `nineforge_check` (versioned report) and `nineforge_fix` (typed actions;
-`gcode-edit` actions are auto-applicable, `physical-action` never are).
-
-Demo transcript (Gate 1 exit criterion):
-
-```bash
-npm run demo:agent-loop
-```
-
-## Python bindings (PAI-301, replaces the subprocess wedge)
-
-`python/nineforge.py` exposes `check(gcode, workcell, state=None, rules=None)` for
-Python-side agent stacks (ROS 2 / LeRobot prototyping) and returns the versioned
-report.
-
-Since v0.7.0 the binding no longer shells out to the CLI with temp files: it pipes a
-JSON payload over stdin to a compiled esbuild bundle (`dist/python-bridge.js`), so the
-only runtime requirement is Node.js >= 18. Build it once with:
-
-```bash
-npm install
-npm run build:python
-```
-
-Set `NINEFORGE_REPO` to your checkout path if the module lives outside the repo.
-A true PyPI/WASM distribution remains roadmap work.
-
-## Docker
-
-`docker build -t nineforge . && docker run -p 3000:3000 nineforge` serves the web UI
-(non-root user, healthcheck included).
-
-## Custom Rule Engine (PAI-503)
-
-NineForge supports custom validation rules via YAML or JSON files. Rules are evaluated
-deterministically against the parsed G-code and machine state, adhering to the "fail
-closed" philosophy.
-
-### Supported Rule Types (v1.0)
-
-| Type | Description | Parameters |
-|------|-------------|------------|
-| `max_feed` | Ensures cutting feedrates do not exceed a limit. | `max` (number) |
-| `min_z` | Ensures Z coordinates do not go below a limit. | `min` (number) |
-| `max_tool_length` | Ensures tool lengths do not exceed a limit. | `max` (number) |
-
-### Example `rules.yaml`
-
-```yaml
-version: "1.0"
-rules:
-  - id: "NO_HIGH_FEED"
-    severity: "error"
-    type: "max_feed"
-    params:
-      max: 500
-  - id: "SAFE_DEPTH"
-    severity: "warning"
-    type: "min_z"
-    params:
-      min: -10
-```
-
-### Usage
-
-- **CLI:** `npx tsx cli/main.ts check job.nc --workcell cell.json --rules rules.yaml`
-- **API:** include a `rules` object in the body of `/api/analyze` or `/api/batch`
-- **MCP:** pass `rulesJson` to `nineforge_check`
-
-## REST API (PAI-302/303)
-
-NineForge exposes a stateless REST API for programmatic validation. Because `check()`
-is designed as a fail-closed package boundary, the API never throws 500 errors on bad
-inputs -- invalid payloads result in HTTP 200 responses with a `block` verdict and
-`NF107` diagnostics.
-
-### Endpoints
-
-#### `POST /api/analyze`
-Analyze a single G-code program. Request body:
-
-```json
-{
-  "gcode": "G21\nG90\n...",
-  "workcell": "JSON string or object",
-  "state": "JSON string or object (optional)",
-  "rules": { "version": "1.0", "rules": [ ... ] }
-}
-```
-
-Response:
-
-```json
-{ "result": { "verdict": "pass|caution|block", "diagnostics": [...], "reportVersion": 1 }, "summary": "..." }
-```
-
-#### `POST /api/batch`
-Analyze up to 10 G-code programs in one request (ideal for AI agent loops). The body is
-an array of jobs, each with an optional `id`:
-
-```json
-[
-  { "id": "var_1", "gcode": "...", "workcell": "..." },
-  { "id": "var_2", "gcode": "...", "workcell": "..." }
-]
-```
-
-Response:
-
-```json
-{ "results": [ { "id": "var_1", "result": {...}, "summary": "..." }, ... ] }
-```
-
-A malformed job cannot sink the batch: it receives a per-job `error` while healthy jobs
-still get full reports.
-
-#### `GET /api/openapi`
-Returns the OpenAPI 3.1 specification for the API (importable into Swagger UI or
-codegen tooling).
-
-## Core Library (PAI-101)
-
-NineForge is available as a standalone Node.js library (`@nineforge/core`), emitting
-ESM, CJS, and TypeScript declarations. It exposes a fail-closed, strictly-typed API
-surface for building plugins, custom CI tools, or embedding validation into other
-agent frameworks.
-
-### Installation
-*(Once published to npm)*
-
-```bash
-npm install @nineforge/core
-```
-
-### Usage (ESM)
-
-```typescript
-import { check } from "@nineforge/core";
-
-const gcode = "G21\nG90\nG0 X0 Y0 Z5\nG1 X10 Y10 F1000\nM30\n";
-const workcell = {
-  machine: "My Machine",
-  limits: { min: { x: -100, y: -100, z: -100 }, max: { x: 100, y: 100, z: 100 } },
-  rapidFeed: 5000,
-  fixtures: []
-};
-
-const report = check(gcode, JSON.stringify(workcell));
-console.log(report.verdict); // "pass" | "caution" | "block"
-```
-
-### API Surface
-- `check(gcode, workcellJson, stateJson?, rules?)` - The fail-closed package boundary.
-- `parseGCode(code)` - Parse G-code into segments.
-- `analyze(parse, workcell, state?, rules?)` - Core validation logic.
-- `evaluateRules(parse, workcell, state, rules)` - Evaluate custom PAI-503 rules.
-- Full TypeScript definitions included for all domain types (`Workcell`,
-  `MachineState`, `Report`, etc.).

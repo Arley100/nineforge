@@ -13,7 +13,25 @@
     "motion": "rapid",
     "feed": 500,
     "feedSet": false,
-    "line": 2
+    "line": 2,
+    "anchor": "none"
+  },
+  {
+    "from": {
+      "x": 0,
+      "y": 0,
+      "z": 5
+    },
+    "to": {
+      "x": 0,
+      "y": 0,
+      "z": 5
+    },
+    "motion": "rapid",
+    "feed": 500,
+    "feedSet": false,
+    "line": 3,
+    "anchor": "end"
   },
   {
     "from": {

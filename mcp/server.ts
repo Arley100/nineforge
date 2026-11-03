@@ -1,102 +1,38 @@
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-import { check } from "../lib/check.js";
-import { suggestFixes } from "../lib/fix.js";
-import { parseGCode } from "../lib/parse.js";
-import { parseWorkcell } from "../lib/workcell.js";
-import { RuleSchema } from "../lib/rules.js";
+import { check } from "../lib/check";
+import { suggestFixes } from "../lib/fix";
+import { stress } from "../lib/perturb";
+import { parseRules } from "../lib/rules";
+import { parseState } from "../lib/state";
+import { parseWorkcell } from "../lib/workcell";
+import pkg from "../package.json";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const pkg = JSON.parse(readFileSync(join(__dirname, "../package.json"), "utf8"));
+const input = {
+  gcode: z.string().min(1).max(2_000_000).describe("G-code program text"),
+  workcellJson: z.string().min(1).max(500_000).describe("Workcell JSON (limits, fixtures, stock, feedLimit)"),
+  stateJson: z.string().max(500_000).optional().describe("Machine state JSON (work offsets, tool table)"),
+  rules: z.string().max(100_000).optional().describe("Custom rule file contents (YAML or JSON)"),
+};
+const reply = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }] });
+const rulesOf = (text?: string) => (text ? parseRules(text) : undefined);
 
-const server = new Server(
-  { name: "nineforge-mcp", version: pkg.version },
-  { capabilities: { tools: {} } }
-);
+const server = new McpServer({ name: "nineforge", version: pkg.version });
 
-const checkSchema = z.object({
-  gcode: z.string().min(1).max(2000000),
-  workcellJson: z.string().min(1).max(500000),
-  stateJson: z.string().max(500000).nullable().optional()
-});
+server.registerTool("nineforge_check", {
+  description: "Validate a G-code program against a workcell and machine state. Returns a versioned report; verdict 'block' means do not run.",
+  inputSchema: input,
+}, ({ gcode, workcellJson, stateJson, rules }) => reply(check(gcode, workcellJson, stateJson, rulesOf(rules))));
 
-const fixSchema = z.object({
-  gcode: z.string().min(1),
-  workcellJson: z.string().min(1),
-  stateJson: z.string().nullable().optional()
-});
+server.registerTool("nineforge_fix", {
+  description: "Suggest typed fixes. 'gcode-edit' actions are safe to auto-apply; 'physical-action' actions need a human (moving a clamp).",
+  inputSchema: input,
+}, ({ gcode, workcellJson, stateJson }) => reply(suggestFixes(gcode, parseWorkcell(workcellJson), stateJson ? parseState(stateJson) : null)));
 
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [
-    {
-      name: "nineforge_check",
-      description: "Validates G-code against a workcell and machine state.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          gcode: { type: "string" },
-          workcellJson: { type: "string" },
-          stateJson: { type: "string" }
-        },
-        required: ["gcode", "workcellJson"]
-      }
-    },
-    {
-      name: "nineforge_fix",
-      description: "Suggests fixes for a blocked G-code program.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          gcode: { type: "string" },
-          workcellJson: { type: "string" },
-          stateJson: { type: "string" }
-        },
-        required: ["gcode", "workcellJson"]
-      }
-    }
-  ]
-}));
+server.registerTool("nineforge_stress", {
+  description: "Re-run the checks under setup perturbations (fixture shifts, work-zero errors, feed overrides).",
+  inputSchema: input,
+}, ({ gcode, workcellJson, stateJson, rules }) => reply(stress(gcode, workcellJson, stateJson, rulesOf(rules))));
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
-  
-  try {
-    if (name === "nineforge_check") {
-      const parsed = checkSchema.parse(args || {});
-      const report = check(parsed.gcode, parsed.workcellJson, parsed.stateJson || null);
-      return { content: [{ type: "text", text: JSON.stringify(report, null, 2) }] };
-    }
-    
-    if (name === "nineforge_fix") {
-      const parsed = fixSchema.parse(args || {});
-      const workcell = parseWorkcell(parsed.workcellJson);
-      const parsedGcode = parseGCode(parsed.gcode);
-      const fix = suggestFixes(parsed.gcode, workcell, parsedGcode.segments);
-      return { content: [{ type: "text", text: JSON.stringify(fix, null, 2) }] };
-    }
-  } catch (e) {
-    return {
-      content: [{ type: "text", text: "Error: " + (e instanceof Error ? e.message : String(e)) }],
-      isError: true
-    };
-  }
-  
-  throw new Error("Unknown tool: " + name);
-});
-
-async function main() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error("NineForge MCP server running on stdio");
-}
-
-main().catch(console.error);
+server.connect(new StdioServerTransport()).then(() => console.error("NineForge MCP server running on stdio"));

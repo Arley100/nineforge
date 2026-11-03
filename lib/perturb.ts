@@ -1,34 +1,49 @@
-import { Workcell } from "./types";
-export type Perturbation = { id: string; name: string; apply: (gcode: string, workcell: Workcell) => { gcode: string; workcell: Workcell }; };
-function shiftFixture(w: Workcell, dx: number, dy: number): Workcell { return { ...w, fixtures: w.fixtures.map((f) => ({ ...f, min: { x: f.min.x + dx, y: f.min.y + dy, z: f.min.z }, max: { x: f.max.x + dx, y: f.max.y + dy, z: f.max.z } })) }; }
-function growFixtures(w: Workcell, margin: number): Workcell { return { ...w, fixtures: w.fixtures.map((f) => ({ ...f, min: { x: f.min.x - margin, y: f.min.y - margin, z: f.min.z }, max: { x: f.max.x + margin, y: f.max.y + margin, z: f.max.z } })) }; }
-function shiftCoords(gcode: string, dx: number, dy: number): string {
-  if (/\bG91\b/i.test(gcode)) {
-    // In incremental mode, shifting every coordinate word changes relative step sizes.
-    // A true work-zero shift requires tracking modal state; skip to avoid physically wrong geometry.
-    return gcode;
-  }
-  return gcode.split(/\r?\n/).map((line) => {
-    const clean = line.split(";")[0];
-    if (!clean.trim()) return line;
-    return clean.split(/\s+/).map((w) => {
-      const u = w.toUpperCase();
-      if (u.startsWith("X")) return "X" + (Number(u.slice(1)) + dx);
-      if (u.startsWith("Y")) return "Y" + (Number(u.slice(1)) + dy);
-      return w;
-    }).join(" ");
-  }).join("\n");
-}
-function scaleFeeds(gcode: string, factor: number): string { return gcode.split(/\r?\n/).map((line) => { const clean = line.split(";")[0]; if (!clean.trim()) return line; return clean.split(/\s+/).map((w) => { const u = w.toUpperCase(); if (u.startsWith("F")) return "F" + Math.round(Number(u.slice(1)) * factor); return w; }).join(" "); }).join("\n"); }
+import { analyze } from "./analyze";
+import { parseGCode } from "./parse";
+import { RuleFile } from "./rules";
+import { parseState } from "./state";
+import { Box, MachineState, ParseResult, Vec3, Verdict, Workcell } from "./types";
+import { parseWorkcell } from "./workcell";
+
+type Variant = { parse: ParseResult; workcell: Workcell };
+export type Perturbation = { id: string; name: string; apply: (v: Variant) => Variant };
+export type StressRow = { id: string; name: string; verdict: Verdict; codes: string[] };
+
+const shift = <B extends Box>(b: B, d: Vec3, grow = 0): B => ({
+  ...b,
+  min: { x: b.min.x + d.x - grow, y: b.min.y + d.y - grow, z: b.min.z + d.z },
+  max: { x: b.max.x + d.x + grow, y: b.max.y + d.y + grow, z: b.max.z + d.z },
+});
+const fixtures = (x: number, y: number, grow = 0) => ({ parse, workcell: w }: Variant): Variant => ({ parse, workcell: { ...w, fixtures: w.fixtures.map((f) => shift(f, { x, y, z: 0 }, grow)) } });
+// A work-zero error moves the toolpath against everything else: shift the whole cell the other way.
+const zero = (x: number, y: number, z: number) => ({ parse, workcell: w }: Variant): Variant => {
+  const d = { x: -x, y: -y, z: -z };
+  return { parse, workcell: { ...w, limits: shift(w.limits, d), fixtures: w.fixtures.map((f) => shift(f, d)), ...(w.stock ? { stock: shift(w.stock, d) } : {}) } };
+};
+const feed = (k: number) => ({ parse, workcell }: Variant): Variant => ({ workcell, parse: { ...parse, segments: parse.segments.map((s) => (s.motion === "linear" ? { ...s, feed: s.feed * k } : s)) } });
+
 export const PERTURBATIONS: Perturbation[] = [
-  { id: "base", name: "Nominal workcell", apply: (g, w) => ({ gcode: g, workcell: w }) },
-  { id: "fx+2", name: "Fixture +2mm X", apply: (g, w) => ({ gcode: g, workcell: shiftFixture(w, 2, 0) }) },
-  { id: "fx-2", name: "Fixture -2mm X", apply: (g, w) => ({ gcode: g, workcell: shiftFixture(w, -2, 0) }) },
-  { id: "fy+2", name: "Fixture +2mm Y", apply: (g, w) => ({ gcode: g, workcell: shiftFixture(w, 0, 2) }) },
-  { id: "fy-2", name: "Fixture -2mm Y", apply: (g, w) => ({ gcode: g, workcell: shiftFixture(w, 0, -2) }) },
-  { id: "zero+1", name: "Work zero +1mm X", apply: (g, w) => ({ gcode: shiftCoords(g, 1, 0), workcell: w }) },
-  { id: "zero-1", name: "Work zero -1mm Y", apply: (g, w) => ({ gcode: shiftCoords(g, 0, -1), workcell: w }) },
-  { id: "wear", name: "Fixture margin +0.5mm", apply: (g, w) => ({ gcode: g, workcell: growFixtures(w, 0.5) }) },
-  { id: "feed110", name: "Feed override 110%", apply: (g, w) => ({ gcode: scaleFeeds(g, 1.1), workcell: w }) },
-  { id: "feed125", name: "Feed override 125%", apply: (g, w) => ({ gcode: scaleFeeds(g, 1.25), workcell: w }) },
+  { id: "base", name: "Nominal workcell", apply: (v) => v },
+  { id: "fx+2", name: "Fixture +2mm X", apply: fixtures(2, 0) },
+  { id: "fx-2", name: "Fixture -2mm X", apply: fixtures(-2, 0) },
+  { id: "fy+2", name: "Fixture +2mm Y", apply: fixtures(0, 2) },
+  { id: "fy-2", name: "Fixture -2mm Y", apply: fixtures(0, -2) },
+  { id: "zero+1", name: "Work zero +1mm X", apply: zero(1, 0, 0) },
+  { id: "zero-1", name: "Work zero -1mm Y", apply: zero(0, -1, 0) },
+  { id: "zeroz", name: "Work zero -0.5mm Z (touch-off)", apply: zero(0, 0, -0.5) },
+  { id: "wear", name: "Fixture margin +0.5mm", apply: fixtures(0, 0, 0.5) },
+  { id: "feed110", name: "Feed override 110%", apply: feed(1.1) },
+  { id: "feed125", name: "Feed override 125%", apply: feed(1.25) },
 ];
+
+/** Re-runs the checks under every perturbation. Inputs that fail to parse yield no rows (check() reports NF107). */
+export function stress(gcode: string, workcellJson: string, stateJson?: string | null, rules?: RuleFile): StressRow[] {
+  let workcell: Workcell, state: MachineState | null;
+  try { workcell = parseWorkcell(workcellJson); state = stateJson?.trim() ? parseState(stateJson) : null; } catch { return []; }
+  const parse = parseGCode(gcode);
+  return PERTURBATIONS.map((p) => {
+    const v = p.apply({ parse, workcell });
+    const r = analyze(v.parse, v.workcell, state, rules);
+    return { id: p.id, name: p.name, verdict: r.verdict, codes: [...new Set(r.diagnostics.filter((d) => d.severity === "error").map((d) => d.code))] };
+  });
+}
