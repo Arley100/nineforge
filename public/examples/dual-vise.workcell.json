@@ -1,0 +1,12 @@
+{
+  "machine": "VMC 500 (two vises)",
+  "limits": { "min": { "x": -250, "y": -200, "z": -100 }, "max": { "x": 250, "y": 200, "z": 100 } },
+  "rapidFeed": 12000,
+  "feedLimit": 1000,
+  "fixtures": [
+    { "name": "vise1-front-jaw", "min": { "x": -175, "y": -22, "z": -40 }, "max": { "x": -75, "y": -12, "z": -3 } },
+    { "name": "vise1-back-jaw", "min": { "x": -175, "y": 42, "z": -40 }, "max": { "x": -75, "y": 52, "z": -3 } },
+    { "name": "vise2-front-jaw", "min": { "x": 75, "y": -22, "z": -40 }, "max": { "x": 175, "y": -12, "z": -3 } },
+    { "name": "vise2-back-jaw", "min": { "x": 75, "y": 42, "z": -40 }, "max": { "x": 175, "y": 52, "z": -3 } }
+  ]
+}

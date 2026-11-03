@@ -1,0 +1,11 @@
+{
+  "jobs": [
+    { "program": "bracket.nc", "workcell": "bracket.workcell.json", "state": "bracket.state.json", "expect": "block", "codes": ["NF001", "NF003"] },
+    { "program": "clean.nc", "workcell": "clean.workcell.json", "state": "clean.state.json", "expect": "pass" },
+    { "program": "messy.nc", "workcell": "messy.workcell.json", "state": "messy.state.json", "expect": "pass" },
+    { "program": "mismatch.nc", "workcell": "mismatch.workcell.json", "state": "mismatch.state.json", "expect": "block", "codes": ["NF201", "NF202"] },
+    { "program": "overtravel.nc", "workcell": "overtravel.workcell.json", "state": "overtravel.state.json", "expect": "block", "codes": ["NF002"] },
+    { "program": "dual-vise.nc", "workcell": "dual-vise.workcell.json", "state": "dual-vise.state.json", "expect": "pass" },
+    { "program": "high-feed.nc", "workcell": "high-feed.workcell.json", "rules": "custom-rules.yaml", "expect": "block", "codes": ["NO_HIGH_FEED"] }
+  ]
+}

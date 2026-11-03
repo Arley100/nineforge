@@ -1,16 +1,17 @@
 node_modules
 .next
+dist/
 out
 build
 .DS_Store
-*.pem
+*.tsbuildinfo
 npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+__pycache__/
 .env
 .env.local
-*.tsbuildinfo
+# Signing keys and local run artifacts: never commit
+*.pem
+*.key
+*.sarif
+*.jsonl
 nineforge.zip
-dist/
-
-__pycache__/

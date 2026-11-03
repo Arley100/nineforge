@@ -13,7 +13,8 @@
     "motion": "rapid",
     "feed": 500,
     "feedSet": false,
-    "line": 2
+    "line": 2,
+    "anchor": "none"
   },
   {
     "from": {
@@ -29,7 +30,8 @@
     "motion": "linear",
     "feed": 254,
     "feedSet": true,
-    "line": 4
+    "line": 4,
+    "anchor": "none"
   },
   {
     "from": {
@@ -45,6 +47,7 @@
     "motion": "linear",
     "feed": 254,
     "feedSet": false,
-    "line": 6
+    "line": 6,
+    "anchor": "none"
   }
 ]

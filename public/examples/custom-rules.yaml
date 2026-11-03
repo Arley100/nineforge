@@ -1,3 +1,4 @@
+# Shop rules layered on top of the built-in checks (types: max_feed, min_z, min_rapid_z, max_tool_length).
 version: "1.0"
 rules:
   - id: "NO_HIGH_FEED"
@@ -5,3 +6,8 @@ rules:
     type: "max_feed"
     params:
       max: 500
+  - id: "CLEARANCE_PLANE"
+    severity: "warning"
+    type: "min_rapid_z"
+    params:
+      min: 3

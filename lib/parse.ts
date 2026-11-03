@@ -1,183 +1,219 @@
 import { Diagnostic, ParseResult, Segment, Vec3 } from "./types";
 
+type Axis = "x" | "y" | "z";
+type Frame = NonNullable<Segment["frames"]>[Axis] & {}; // offset (and for Z, tool-length context) a value was programmed in
+type Plane = [Axis, Axis, Axis]; // [first, second, normal]: right-handed, so CCW matches the controller
+
+const AXES = ["x", "y", "z"] as const;
 const IN_TO_MM = 25.4;
-const KNOWN_G = new Set([0, 1, 2, 3, 20, 21, 43, 44, 49, 90, 91, 94, 95]);
-const UNMODELED_MOTION_G = new Set([28, 30, 33, 41, 42, 53, 68, 73, 74, 76, 81, 82, 83, 84, 85, 86, 87, 88, 89, 92]);
 const CHORD_TOL_MM = 0.05;
-const MAX_ARC_STEPS = 256;
+const MAX_ARC_STEPS = 2048;
+export const MAX_SEGMENTS = 500_000;
 const EPS = 1e-9;
+const NUMBER = /^[-+]?(\d+\.?\d*|\.\d+)$/;
+const PLANES: Record<number, Plane> = { 17: ["x", "y", "z"], 18: ["z", "x", "y"], 19: ["y", "z", "x"] };
+const OFFSET_AXIS: Record<string, Axis> = { I: "x", J: "y", K: "z" };
+/** Allowlist: modeled, or modal codes that never change the toolpath. Any other G-code blocks (NF106). */
+const KNOWN_G = new Set([0, 1, 2, 3, 4, 8, 9, 15, 17, 18, 19, 20, 21, 40, 43, 49, 50, 50.1, 61, 61.1, 62, 63, 64, 67, 69, 80, 90, 91, 91.1, 94, 95, 97, 98, 99, 103, 187]);
+/** Known codes whose axis words are parameters, not a destination (dwell time, scaling/mirror cancel). */
+const AXES_ARE_PARAMS = new Set([4, 50, 50.1]);
+const SUBPROGRAM_M = new Set([97, 98, 99, 198]);
 
-type Motion = "rapid" | "linear" | "cw" | "ccw";
+const planar = (a: Vec3, b: Vec3, u: Axis, v: Axis) => Math.hypot(b[u] - a[u], b[v] - a[v]);
+const sweepOf = (a0: number, a1: number, ccw: boolean) => { const s = ccw ? a1 - a0 : a0 - a1; return ((s % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI); };
+const toolName = (n: number) => "T" + String(n).padStart(2, "0");
 
-function xyDist(a: Vec3, b: Vec3): number {
-  return Math.hypot(b.x - a.x, b.y - a.y);
-}
-
-function tessellateArc(from: Vec3, to: Vec3, center: { x: number; y: number }, dir: "cw" | "ccw"): Vec3[] {
-  const r = Math.hypot(from.x - center.x, from.y - center.y);
+function tessellateArc(from: Vec3, to: Vec3, c: [number, number], ccw: boolean, [u, v, w]: Plane): Vec3[] {
+  const r = Math.hypot(from[u] - c[0], from[v] - c[1]);
   if (r <= CHORD_TOL_MM) return [to];
-  const a0 = Math.atan2(from.y - center.y, from.x - center.x);
-  const a1 = Math.atan2(to.y - center.y, to.x - center.x);
-  let sweep = dir === "ccw" ? a1 - a0 : a0 - a1;
-  sweep = ((sweep % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-  if (sweep < EPS && xyDist(from, to) < EPS) sweep = 2 * Math.PI;
+  const a0 = Math.atan2(from[v] - c[1], from[u] - c[0]);
+  let sweep = sweepOf(a0, Math.atan2(to[v] - c[1], to[u] - c[0]), ccw);
+  if (sweep < EPS && planar(from, to, u, v) < EPS) sweep = 2 * Math.PI;
   if (sweep < EPS) return [to];
   const maxStep = 2 * Math.acos(Math.min(1, Math.max(-1, 1 - CHORD_TOL_MM / r)));
   const n = Math.min(MAX_ARC_STEPS, Math.max(1, Math.ceil(sweep / maxStep)));
   const points: Vec3[] = [];
-  for (let i = 1; i <= n; i++) {
-    if (i === n) { points.push(to); break; }
-    const ang = dir === "ccw" ? a0 + (sweep * i) / n : a0 - (sweep * i) / n;
-    points.push({ x: center.x + r * Math.cos(ang), y: center.y + r * Math.sin(ang), z: from.z + ((to.z - from.z) * i) / n });
+  for (let i = 1; i < n; i++) {
+    const ang = ccw ? a0 + (sweep * i) / n : a0 - (sweep * i) / n;
+    const p = { ...from };
+    p[u] = c[0] + r * Math.cos(ang); p[v] = c[1] + r * Math.sin(ang); p[w] = from[w] + ((to[w] - from[w]) * i) / n;
+    points.push(p);
   }
+  points.push(to);
   return points;
 }
 
-function centerFromR(from: Vec3, to: Vec3, r: number, dir: "cw" | "ccw"): { x: number; y: number } | null {
-  const d = xyDist(from, to);
+function centerFromR(from: Vec3, to: Vec3, r: number, ccw: boolean, u: Axis, v: Axis): [number, number] | null {
+  const d = planar(from, to, u, v);
   if (d < EPS || d > 2 * Math.abs(r) + 1e-6) return null;
   const h = Math.sqrt(Math.max(0, r * r - (d / 2) * (d / 2)));
-  const mid = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
-  const perp = { x: -(to.y - from.y) / d, y: (to.x - from.x) / d };
-  const candidates = [
-    { x: mid.x + perp.x * h, y: mid.y + perp.y * h },
-    { x: mid.x - perp.x * h, y: mid.y - perp.y * h },
-  ];
-  const wantMinor = r > 0;
+  const mid = [(from[u] + to[u]) / 2, (from[v] + to[v]) / 2];
+  const perp = [-(to[v] - from[v]) / d, (to[u] - from[u]) / d];
+  const candidates: [number, number][] = [[mid[0] + perp[0] * h, mid[1] + perp[1] * h], [mid[0] - perp[0] * h, mid[1] - perp[1] * h]];
+  // Positive R selects the minor arc (<= 180 deg), negative R the major arc.
   for (const c of candidates) {
-    const a0 = Math.atan2(from.y - c.y, from.x - c.x);
-    const a1 = Math.atan2(to.y - c.y, to.x - c.x);
-    let sweep = dir === "ccw" ? a1 - a0 : a0 - a1;
-    sweep = ((sweep % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-    if (wantMinor ? sweep <= Math.PI + 1e-6 : sweep >= Math.PI - 1e-6) return c;
+    const sweep = sweepOf(Math.atan2(from[v] - c[1], from[u] - c[0]), Math.atan2(to[v] - c[1], to[u] - c[0]), ccw);
+    if (r > 0 ? sweep <= Math.PI + 1e-6 : sweep >= Math.PI - 1e-6) return c;
   }
   return candidates[0];
 }
 
-export function parseGCode(code: string): ParseResult {
+/**
+ * Parses G-code into program-coordinate segments. Lines starting with '/' (block delete) are
+ * executed; when there are any, `blockDeleteVariant` holds the parse with them skipped.
+ */
+export function parseGCode(code: string, skipDeleted = false): ParseResult {
   const segments: Segment[] = [];
   const diagnostics: Diagnostic[] = [];
   const noted = new Set<string>();
+  const note = (key: string, d: Diagnostic) => { if (!noted.has(key)) { noted.add(key); diagnostics.push(d); } };
   const offsetsUsed: string[] = [];
   const toolsUsed: string[] = [];
+  // known: the axis value has been programmed absolutely; frames: the context it was programmed in.
+  const known = { x: false, y: false, z: false };
+  const frames: Record<Axis, Frame> = { x: { wcs: "G54" }, y: { wcs: "G54" }, z: { wcs: "G54" } };
   let pos: Vec3 = { x: 0, y: 0, z: 0 };
-  let feed = 500;
-  let feedEverSet = false;
-  let motion: Motion = "rapid";
+  let motion: "rapid" | "linear" | "cw" | "ccw" = "rapid";
   let units: "mm" | "in" = "mm";
-  let incremental = false;
-  let toolComp: "none" | "g43" | "g44" = "none";
-  let hRef: string | null = null;
-  let feedMode: "g94" | "g95" = "g94";
-  let spindleSpeed = 0;
-  let spindleEverSet = false;
-  let spindleState: "unknown" | "on" | "off" = "unknown";
-  const note = (key: string, d: Diagnostic) => { if (!noted.has(key)) { noted.add(key); diagnostics.push(d); } };
+  let plane = PLANES[17];
+  let feed = 500, feedEverSet = false, incremental = false, perRev = false, ended = false, sawDeleted = false;
+  let spindle: "unknown" | "on" | "off" = "unknown";
+  let speed: number | null = null;
+  let wcs: string | undefined, tool: string | undefined, pendingTool: string | undefined, tlo: string | undefined;
 
   code.split(/\r?\n/).forEach((raw, idx) => {
-    const lineNo = idx + 1;
-    const line = raw.split(";")[0].replace(/\([^)]*\)/g, " ").trim();
-    if (!line) return;
-    const words = line.match(/[A-Za-z][^A-Za-z]*/g) || [];
+    if (ended) return; // M2/M30 end the program; anything after never runs
+    const line = idx + 1;
+    const deleted = /^\s*\//.test(raw);
+    sawDeleted ||= deleted;
+    if (deleted && skipDeleted) return;
+    // Strip (comments) first so a ';' inside parentheses cannot leak words, then ';' comments.
+    const text = raw.replace(/\([^)]*\)?/g, " ").split(";")[0].trim();
+    if (!text) return;
+    if (/[^\s\/%]/.test(text.match(/^[^A-Za-z]*/)![0])) diagnostics.push({ code: "NF105", severity: "error", message: "Unparseable text before the first word on this line; the program cannot be validated.", line });
+    // RS274 order of execution: G words (units, distance mode, plane, ...) apply before axis words.
+    const isG = (w: string) => Number(w[0].toUpperCase() === "G");
+    const words = (text.match(/[A-Za-z][^A-Za-z]*/g) || []).sort((a, b) => isG(b) - isG(a));
     const next = { ...pos };
-    let localMotion: Motion = motion;
-    let localFeed = feed;
-    let localFeedSet = false;
-    let iVal = 0, jVal = 0, sawIJ = false;
-    let rVal: number | null = null;
+    const off = { x: 0, y: 0, z: 0 };
+    const sawOff = { x: false, y: false, z: false };
+    const absolute: Axis[] = [];
+    let r: number | null = null;
+    let feedSet = false, skipAxes = false, axisWords = false, g43 = false, g49 = false, m6 = false, spindleOn = false, end = false;
+    let hTool: string | undefined;
 
     for (const w of words) {
-      const cmd = w.toUpperCase();
-      const letter = cmd[0];
-      const value = Number(cmd.slice(1));
-      if (cmd === "%") continue;
-      if (Number.isNaN(value)) {
-        diagnostics.push({ code: "NF105", severity: "error", message: "Unparseable word '" + cmd + "'; the program cannot be validated.", line: lineNo });
-        continue;
-      }
+      const letter = w[0].toUpperCase();
+      const num = w.slice(1).replace(/\s+/g, "");
+      if (!NUMBER.test(num)) { diagnostics.push({ code: "NF105", severity: "error", message: "Unparseable word '" + w.trim() + "'; the program cannot be validated.", line }); continue; }
+      const value = Number(num);
       const s = units === "in" ? IN_TO_MM : 1;
       if (letter === "G") {
-        if (value === 0) localMotion = "rapid";
-        else if (value === 1) localMotion = "linear";
-        else if (value === 2) localMotion = "cw";
-        else if (value === 3) localMotion = "ccw";
-        else if (value === 20) units = "in";
-        else if (value === 21) units = "mm";
-        else if (value === 43) toolComp = "g43";
-        else if (value === 44) toolComp = "g44";
-        else if (value === 49) toolComp = "none";
-        else if (value === 90) incremental = false;
-        else if (value === 91) incremental = true;
-        else if (value === 94) feedMode = "g94";
-        else if (value === 95) feedMode = "g95";
-        else if (value >= 54 && value <= 59) { const name = "G" + value; if (!offsetsUsed.includes(name)) offsetsUsed.push(name); }
-        else if (UNMODELED_MOTION_G.has(value)) note("gmotion" + value, { code: "NF106", severity: "error", message: "G" + value + " commands machine motion that is not modeled; the program cannot be validated.", line: lineNo });
-        else if (!KNOWN_G.has(value)) note("g" + value, { code: "NF102", severity: "info", message: "G" + value + " is not modeled and was ignored.", line: lineNo });
-      } else if (letter === "X") next.x = incremental ? next.x + value * s : value * s;
-      else if (letter === "Y") next.y = incremental ? next.y + value * s : value * s;
-      else if (letter === "Z") next.z = incremental ? next.z + value * s : value * s;
-      else if (letter === "I") { iVal = value * s; sawIJ = true; }
-      else if (letter === "J") { jVal = value * s; sawIJ = true; }
-      else if (letter === "K") note("arcK", { code: "NF102", severity: "info", message: "K is ignored; only XY-plane arcs are modeled.", line: lineNo });
-      else if (letter === "R") rVal = value * s;
-      else if (letter === "H") hRef = "H" + String(value).padStart(2, "0");
-      else if (letter === "F") { localFeed = value * s; localFeedSet = true; feedEverSet = true; }
-      else if (letter === "T") { const name = "T" + String(value).padStart(2, "0"); if (!toolsUsed.includes(name)) toolsUsed.push(name); }
-      else if (letter === "M") { if (value === 3 || value === 4) spindleState = "on"; else if (value === 5) spindleState = "off"; }
-      else if (letter === "N") {}
-      else if (letter === "S") { spindleSpeed = value; spindleEverSet = true; if (value === 0) spindleState = "off"; else if (spindleState === "unknown") spindleState = "on"; }
-      else note("word" + letter, { code: "NF102", severity: "info", message: "Word '" + letter + "' is not modeled and was ignored.", line: lineNo });
+        const offset = Number.isInteger(value) ? value >= 54 && value <= 59 : value > 59 && value < 60; // G54-G59, G59.x
+        if (offset) { wcs = "G" + value; if (!offsetsUsed.includes(wcs)) offsetsUsed.push(wcs); }
+        else if (!KNOWN_G.has(value)) { skipAxes = true; note("g" + value, { code: "NF106", severity: "error", message: "G" + value + " (motion, coordinate transform or unsupported code) is not modeled; the program cannot be validated.", line }); }
+        else if (AXES_ARE_PARAMS.has(value)) skipAxes = true;
+        else if (value <= 3 && Number.isInteger(value)) motion = (["rapid", "linear", "cw", "ccw"] as const)[value];
+        else if (PLANES[value]) plane = PLANES[value];
+        else if (value === 20 || value === 21) units = value === 20 ? "in" : "mm";
+        else if (value === 43) g43 = true;
+        else if (value === 49) g49 = true;
+        else if (value === 90 || value === 91) incremental = value === 91;
+        else if (value === 94 || value === 95) perRev = value === 95;
+      } else if (letter === "X" || letter === "Y" || letter === "Z") {
+        if (skipAxes) continue;
+        const ax = letter.toLowerCase() as Axis;
+        axisWords = true;
+        next[ax] = incremental ? next[ax] + value * s : value * s;
+        if (!incremental) absolute.push(ax);
+      } else if (OFFSET_AXIS[letter]) { off[OFFSET_AXIS[letter]] = value * s; sawOff[OFFSET_AXIS[letter]] = true; }
+      else if (letter === "R") r = value * s;
+      else if (letter === "F") { feed = value * s; feedSet = feedEverSet = true; }
+      else if (letter === "S") speed = value;
+      else if (letter === "H") hTool = toolName(value);
+      else if (letter === "T") { pendingTool = toolName(value); tool ??= pendingTool; if (!toolsUsed.includes(pendingTool)) toolsUsed.push(pendingTool); }
+      else if (letter === "M") {
+        if (value === 3 || value === 4) { spindle = "on"; spindleOn = true; }
+        else if (value === 5) spindle = "off";
+        else if (value === 6) m6 = true;
+        else if (value === 2 || value === 30) end = true;
+        else if (SUBPROGRAM_M.has(value)) note("m" + value, { code: "NF106", severity: "error", message: "M" + value + " changes program flow (subprogram call/return) in a way that is not modeled; the program cannot be validated.", line });
+      } else if ("ABCUVW".includes(letter)) note("axis" + letter, { code: "NF106", severity: "error", message: "Axis word '" + letter + "' (rotary/secondary axis) is not modeled; the program cannot be validated.", line });
+      else if (!"NOPQLD".includes(letter)) note("word" + letter, { code: "NF102", severity: "info", message: "Word '" + letter + "' is not modeled and was ignored.", line });
     }
+    if (m6) {
+      // A tool change retracts Z to the change position (X/Y assumed unchanged) and stops the spindle.
+      if (pendingTool) tool = pendingTool;
+      if (!spindleOn) spindle = "off";
+      known.z = false;
+    }
+    if (g49) tlo = undefined;
+    if (g43) tlo = hTool ?? tool ?? "";
+    else if (hTool && tlo !== undefined) tlo = hTool;
 
-    const isArc = localMotion === "cw" || localMotion === "ccw";
-    const hasMotion = next.x !== pos.x || next.y !== pos.y || next.z !== pos.z || (isArc && sawIJ && xyDist(pos, next) < EPS && (Math.abs(iVal) > EPS || Math.abs(jVal) > EPS));
-    if (hasMotion) {
-      let effectiveFeed = localFeed;
-      if (feedMode === "g95" && localFeedSet) {
-        if (!spindleEverSet) note("g95nospeed", { code: "NF108", severity: "warning", message: "G95 active but no S word set; assuming 1 RPM for feed estimates.", line: lineNo });
-        effectiveFeed = localFeed * Math.max(1, spindleSpeed);
+    const knownBefore = known.x && known.y && known.z;
+    const frameNow = (ax: Axis): Frame => (ax === "z" ? { wcs: wcs ?? "G54", ...(tool ? { tool } : {}), ...(tlo !== undefined ? { tlo } : {}) } : { wcs: wcs ?? "G54" });
+    const same = (a: Frame, b: Frame) => a.wcs === b.wcs && a.tool === b.tool && a.tlo === b.tlo;
+    const frameChanged = absolute.some((ax) => !same(frames[ax], frameNow(ax)));
+    if (!skipAxes) for (const ax of absolute) { known[ax] = true; frames[ax] = frameNow(ax); }
+    const knownAfter = known.x && known.y && known.z;
+    const anchor = knownBefore ? undefined : knownAfter ? "end" : "none";
+    const [u, v] = plane;
+    const isArc = motion === "cw" || motion === "ccw";
+    const fullCircle = isArc && (sawOff[u] || sawOff[v]) && planar(pos, next, u, v) < EPS && (Math.abs(off[u]) > EPS || Math.abs(off[v]) > EPS);
+    const moved = next.x !== pos.x || next.y !== pos.y || next.z !== pos.z || fullCircle;
+    // A move to the same program coordinates still matters when it re-anchors or changes work offset.
+    if (!skipAxes && (axisWords || fullCircle) && (moved || frameChanged || anchor === "end") && segments.length < MAX_SEGMENTS) {
+      const cutting = motion !== "rapid";
+      if (cutting && !feedEverSet) note("nofeed", { code: "NF104", severity: "warning", message: "Cutting move before any F word.", line });
+      if (cutting && (spindle === "off" || speed === 0)) note("spindleOff", { code: "NF109", severity: "error", message: "Cutting move with spindle off (M5, S0, or no M3/M4 after a tool change); risk of broken tool or jammed part.", line });
+      if (cutting && perRev && speed === null) note("g95nospeed", { code: "NF108", severity: "warning", message: "G95 active but no S word set; assuming 1 RPM for feed estimates.", line });
+      if (anchor === "none") {
+        if (cutting) note("unanchoredCut", { code: "NF111", severity: "warning", message: "Cutting move before X, Y and Z are all programmed; its start position is unknown, so it was not geometry-checked.", line });
+        else note("unanchored", { code: "NF110", severity: "info", message: "Start position is unknown until X, Y and Z are all programmed (Z again after a tool change); those rapids are not geometry-checked.", line });
       }
-      const push = (from: Vec3, to: Vec3, m: "rapid" | "linear", arc?: boolean) =>
-        segments.push({ from: { ...from }, to: { ...to }, motion: m, feed: effectiveFeed, feedSet: localFeedSet, line: lineNo, ...(arc ? { arc: true } : {}) });
-      if ((localMotion === "linear" || isArc) && !feedEverSet) note("nofeed", { code: "NF104", severity: "warning", message: "Cutting move before any F word.", line: lineNo });
-      if ((localMotion === "linear" || isArc) && feedEverSet && spindleState === "off") note("spindleOff", { code: "NF109", severity: "error", message: "Cutting move with spindle off (M5 or S0); risk of broken tool or jammed part.", line: lineNo });
-      
-      if (isArc) {
-        const dir: "cw" | "ccw" = localMotion === "cw" ? "cw" : "ccw";
-        let center: { x: number; y: number } | null = null;
-        if (rVal !== null) {
-          center = centerFromR(pos, next, rVal, dir);
-          if (!center) diagnostics.push({ code: "NF103", severity: "error", message: "Arc radius cannot reach endpoint.", line: lineNo });
-        } else if (sawIJ) {
-          center = { x: pos.x + iVal, y: pos.y + jVal };
-          const r0 = Math.hypot(pos.x - center.x, pos.y - center.y);
-          const r1 = Math.hypot(next.x - center.x, next.y - center.y);
-          if (Math.abs(r0 - r1) > Math.max(0.01, 0.0005 * r0)) diagnostics.push({ code: "NF103", severity: "error", message: "Arc radius mismatch.", line: lineNo });
-        } else {
-          diagnostics.push({ code: "NF103", severity: "error", message: "Arc move without I/J or R.", line: lineNo });
-        }
-        if (center) {
-          note("arcModeled", { code: "NF100", severity: "info", message: "Arc moves modeled within " + CHORD_TOL_MM + " mm tolerance.", line: lineNo });
+      const stale = AXES.filter((ax) => !same(frames[ax], frameNow(ax)));
+      const segFeed = perRev ? feed * Math.max(1, speed ?? 1) : feed;
+      const push = (from: Vec3, to: Vec3, arc?: boolean) => segments.push({
+        from: { ...from }, to: { ...to }, motion: cutting ? "linear" : "rapid", feed: segFeed, feedSet, line,
+        ...(arc ? { arc } : {}), ...(anchor ? { anchor } : {}), ...(wcs ? { wcs } : {}), ...(tool ? { tool } : {}), ...(tlo !== undefined ? { tlo } : {}),
+        ...(stale.length ? { frames: Object.fromEntries(stale.map((ax) => [ax, frames[ax]])) } : {}),
+      } as Segment);
+      if (isArc && moved) {
+        const ccw = motion === "ccw";
+        let c: [number, number] | null = null;
+        if (r !== null) {
+          c = centerFromR(pos, next, r, ccw, u, v);
+          if (!c) diagnostics.push({ code: "NF103", severity: "error", message: "Arc radius cannot reach the endpoint (or an R-form full circle).", line });
+        } else if (sawOff[u] || sawOff[v]) {
+          c = [pos[u] + off[u], pos[v] + off[v]];
+          const r0 = Math.hypot(pos[u] - c[0], pos[v] - c[1]);
+          const r1 = Math.hypot(next[u] - c[0], next[v] - c[1]);
+          if (Math.abs(r0 - r1) > Math.max(0.01, 0.0005 * r0)) diagnostics.push({ code: "NF103", severity: "error", message: "Arc radius mismatch.", line });
+        } else diagnostics.push({ code: "NF103", severity: "error", message: "Arc move without center offsets (I/J/K) or R.", line });
+        if (c) {
+          note("arcModeled", { code: "NF100", severity: "info", message: "Arc moves modeled within " + CHORD_TOL_MM + " mm tolerance.", line });
           let prev = pos;
-          for (const p of tessellateArc(pos, next, center, dir)) { push(prev, p, "linear", true); prev = p; }
-        } else {
-          push(pos, next, "linear", true);
-        }
-      } else {
-        push(pos, next, localMotion === "rapid" ? "rapid" : "linear");
-      }
-      pos = next; motion = localMotion; feed = localFeed;
-    } else {
-      motion = localMotion; feed = localFeed;
+          for (const p of tessellateArc(pos, next, c, ccw, plane)) { push(prev, p, true); prev = p; }
+        } else push(pos, next, true);
+      } else push(pos, next);
     }
+    if (!skipAxes) pos = next;
+    if (segments.length >= MAX_SEGMENTS) {
+      note("tooBig", { code: "NF105", severity: "error", message: "Program expands to more than " + MAX_SEGMENTS.toLocaleString("en-US") + " moves; it cannot be validated.", line });
+      ended = true;
+    }
+    if (end) ended = true;
   });
 
-  let envelope: { min: Vec3; max: Vec3 } | null = null;
+  let envelope: ParseResult["assumptions"]["envelope"] = null;
   if (segments.length) {
     const min: Vec3 = { x: Infinity, y: Infinity, z: Infinity };
     const max: Vec3 = { x: -Infinity, y: -Infinity, z: -Infinity };
-    for (const s of segments) { for (const p of [s.from, s.to]) { min.x = Math.min(min.x, p.x); max.x = Math.max(max.x, p.x); min.y = Math.min(min.y, p.y); max.y = Math.max(max.y, p.y); min.z = Math.min(min.z, p.z); max.z = Math.max(max.z, p.z); } }
+    for (const s of segments) for (const p of [s.from, s.to]) for (const ax of AXES) { min[ax] = Math.min(min[ax], p[ax]); max[ax] = Math.max(max[ax], p[ax]); }
     envelope = { min, max };
   }
-  return { segments, diagnostics, units, assumptions: { units, offsetsUsed, toolsUsed, envelope, toolComp, hRef } };
+  const result: ParseResult = { segments, diagnostics, units, assumptions: { units, offsetsUsed, toolsUsed, envelope } };
+  if (sawDeleted && !skipDeleted) result.blockDeleteVariant = parseGCode(code, true);
+  return result;
 }

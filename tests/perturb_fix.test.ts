@@ -3,13 +3,14 @@ import { readFileSync } from "node:fs";
 import { parseGCode } from "../lib/parse";
 import { analyze } from "../lib/analyze";
 import { parseWorkcell } from "../lib/workcell";
-import { PERTURBATIONS } from "../lib/perturb";
+import { stress } from "../lib/perturb";
 import { suggestFixes } from "../lib/fix";
-function load(id: string) { const gcode = readFileSync("public/examples/" + id + ".nc", "utf8"); const workcell = parseWorkcell(readFileSync("public/examples/" + id + ".workcell.json", "utf8")); return { gcode, workcell }; }
+const read = (id: string, ext: string) => readFileSync("public/examples/" + id + ext, "utf8");
 describe("perturbations", () => {
-  it("clean job survives all perturbed workcells", () => { const { gcode, workcell } = load("clean"); for (const p of PERTURBATIONS) { const v = p.apply(gcode, workcell); expect(analyze(parseGCode(v.gcode), v.workcell).verdict).not.toBe("block"); } });
-  it("bracket job blocks at nominal", () => { const { gcode, workcell } = load("bracket"); expect(analyze(parseGCode(gcode), workcell).verdict).toBe("block"); });
+  it("clean job survives all perturbed workcells", () => { const rows = stress(read("clean", ".nc"), read("clean", ".workcell.json")); expect(rows.length).toBeGreaterThan(5); expect(rows.every((r) => r.verdict !== "block")).toBe(true); });
+  it("bracket job blocks at nominal and reports the failing codes", () => { const [base] = stress(read("bracket", ".nc"), read("bracket", ".workcell.json")); expect(base.verdict).toBe("block"); expect(base.codes).toContain("NF001"); });
+  it("returns no rows for an invalid workcell (check() reports NF107)", () => { expect(stress("G0 X1", "{ nope")).toEqual([]); });
 });
 describe("suggestFixes", () => {
-  it("resolves the bracket job to pass", () => { const { gcode, workcell } = load("bracket"); const segments = parseGCode(gcode).segments; const fix = suggestFixes(gcode, workcell, segments); const r = analyze(parseGCode(fix.gcode), fix.workcell); expect(r.verdict).toBe("pass"); expect(fix.notes.length).toBeGreaterThan(0); });
+  it("resolves the bracket job to pass", () => { const gcode = read("bracket", ".nc"); const fix = suggestFixes(gcode, parseWorkcell(read("bracket", ".workcell.json"))); const r = analyze(parseGCode(fix.gcode), fix.workcell); expect(r.verdict).toBe("pass"); expect(fix.notes.length).toBeGreaterThan(0); });
 });
